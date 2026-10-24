@@ -16,6 +16,7 @@ const hash = value =>
     .update(JSON.stringify(value))
     .digest("hex");
 
+// Retained for compatibility with existing imports.
 function splitMenu(text, size = 5500) {
   const parts = [];
 
@@ -42,14 +43,6 @@ function splitMenu(text, size = 5500) {
 
 function publicError(error) {
   const code = Number(error?.status || error?.code);
-  const message = String(error?.message || "");
-
-  if (/API_KEY_INVALID|API key not valid/i.test(message)) {
-    return (
-      "Gemini rejected the backend API key. " +
-      "Update GEMINI_API_KEY on Render and redeploy."
-    );
-  }
 
   if (code === 429) {
     return "Gemini reached its usage limit. Please retry later.";
@@ -67,12 +60,10 @@ function publicError(error) {
   }
 
   if ([400, 401, 403, 404].includes(code)) {
-    return (
-      "Gemini rejected the request. " +
-      "Check the configured model and API key."
-    );
+    return "Gemini rejected the request. Check the configured model, API key, and URL Context access.";
   }
 
+  const message = String(error?.message || "");
   const secret = process.env.GEMINI_API_KEY;
 
   if (
@@ -108,7 +99,7 @@ function registerMenu(app, dependencies = {}) {
 
   const extractionKey = (venue, mode) =>
     hash([
-      "menu-batches-v3",
+      "url-context-v2",
       venue.id,
       venue.menuUrl,
       model(),
@@ -189,9 +180,7 @@ function registerMenu(app, dependencies = {}) {
 
       await fs.rename(temporary, file);
     } catch {
-      console.warn(
-        "[menu] Menu cache could not be saved."
-      );
+      console.warn("[menu] Menu cache could not be saved.");
     }
   }
 
@@ -275,6 +264,7 @@ function registerMenu(app, dependencies = {}) {
         job.status = "error";
         job.error = publicError(error);
 
+        // Never log provider response bodies or dining profiles.
         console.error(
           "[menu] Job failed. Code:",
           error.status ||
@@ -290,6 +280,7 @@ function registerMenu(app, dependencies = {}) {
     return job;
   }
 
+  // Start or reuse menu extraction.
   app.post("/api/menu/jobs", (req, res) => {
     const venue = venues.find(
       item => item.id === req.body?.venueId
@@ -319,7 +310,6 @@ function registerMenu(app, dependencies = {}) {
 
     const key = extractionKey(venue, mode);
 
-    // A refresh never duplicates an extraction already running.
     if (
       refresh &&
       byKey.get(key)?.status !== "running"
@@ -337,11 +327,11 @@ function registerMenu(app, dependencies = {}) {
             job.progress = {
               completed: cached.dishes.length,
               total: cached.dishes.length,
-              unit: "dishes",
             };
             return;
           }
 
+          // Reuse a full extraction for an eight-item preview.
           if (mode === "preview") {
             const full = await diskRead(venue, "full");
 
@@ -357,7 +347,6 @@ function registerMenu(app, dependencies = {}) {
               job.progress = {
                 completed: job.result.dishes.length,
                 total: job.result.dishes.length,
-                unit: "dishes",
               };
 
               return;
@@ -366,14 +355,11 @@ function registerMenu(app, dependencies = {}) {
         }
 
         console.log(
-          `[menu] Reading ${venue.displayName.text}: ${mode}`
+          `[menu] Gemini reading configured URL: ${mode}`
         );
 
         const result = await readUrl(venue, {
           preview: mode === "preview",
-          onProgress: progress => {
-            job.progress = progress;
-          },
         });
 
         if (!validResult(result)) {
@@ -397,7 +383,6 @@ function registerMenu(app, dependencies = {}) {
         job.progress = {
           completed: job.result.dishes.length,
           total: job.result.dishes.length,
-          unit: "dishes",
         };
 
         await diskWrite(venue, mode, job);
@@ -411,6 +396,7 @@ function registerMenu(app, dependencies = {}) {
     }
   });
 
+  // Review extracted dishes against the supplied dining needs.
   app.post("/api/menu/reviews", async (req, res) => {
     try {
       cleanup();
@@ -503,7 +489,7 @@ function registerMenu(app, dependencies = {}) {
       );
 
       const key = hash([
-        "menu-review-v2",
+        "url-context-review-v1",
         model(),
         dishes,
         preferences,
@@ -517,7 +503,6 @@ function registerMenu(app, dependencies = {}) {
         };
 
         job.progress.total = dishes.length;
-        job.progress.unit = "dishes";
 
         const itemKey = item =>
           hash([
@@ -529,10 +514,11 @@ function registerMenu(app, dependencies = {}) {
             preset,
           ]);
 
-        let nextOffset = 0;
-        let reviewFailure = null;
-
-        async function reviewBatch(offset) {
+        for (
+          let offset = 0;
+          offset < dishes.length;
+          offset += 4
+        ) {
           const batch = dishes.slice(offset, offset + 4);
 
           const missing = batch.filter(item => {
@@ -593,6 +579,8 @@ function registerMenu(app, dependencies = {}) {
             }
           }
 
+          // Capture promises before their rejection handlers
+          // can remove failed cache entries.
           const tasks = batch.map(
             item => reviews.get(itemKey(item)).task
           );
@@ -617,10 +605,7 @@ function registerMenu(app, dependencies = {}) {
             );
 
             if (
-              [400, 401, 403, 404, 429, 503].includes(code) ||
-              /API_KEY_INVALID|API key not valid/i.test(
-                String(result.reason?.message || "")
-              )
+              [429, 401, 403, 503].includes(code)
             ) {
               providerFailure = result.reason;
             }
@@ -628,53 +613,25 @@ function registerMenu(app, dependencies = {}) {
 
           job.progress.completed += batch.length;
 
+          // Bound the review cache.
           while (reviews.size > MAX_REVIEWS) {
             reviews.delete(reviews.keys().next().value);
           }
 
           if (providerFailure) {
+            const remaining = dishes.slice(
+              offset + batch.length
+            );
+
+            job.result.failedItems.push(
+              ...remaining.map(item => ({
+                dishId: item.id,
+                error: publicError(providerFailure),
+              }))
+            );
+
             throw providerFailure;
           }
-        }
-
-        async function reviewWorker() {
-          while (
-            !reviewFailure &&
-            nextOffset < dishes.length
-          ) {
-            const offset = nextOffset;
-            nextOffset += 4;
-
-            try {
-              await reviewBatch(offset);
-            } catch (error) {
-              reviewFailure ||= error;
-            }
-          }
-        }
-
-        // Wait for both workers before completing the job.
-        await Promise.all([
-          reviewWorker(),
-          reviewWorker(),
-        ]);
-
-        if (reviewFailure) {
-          const processedIds = new Set([
-            ...job.result.assessments.map(item => item.dishId),
-            ...job.result.failedItems.map(item => item.dishId),
-          ]);
-
-          for (const item of dishes) {
-            if (!processedIds.has(item.id)) {
-              job.result.failedItems.push({
-                dishId: item.id,
-                error: publicError(reviewFailure),
-              });
-            }
-          }
-
-          throw reviewFailure;
         }
 
         if (job.result.failedItems.length) {
@@ -692,6 +649,7 @@ function registerMenu(app, dependencies = {}) {
     }
   });
 
+  // Polling this endpoint does not make another Gemini call.
   app.get("/api/menu/jobs/:jobId", (req, res) => {
     cleanup();
 
