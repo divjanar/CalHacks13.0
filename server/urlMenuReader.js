@@ -50,14 +50,21 @@ function dishKey(venueId, dish) {
 }
 
 function inventoryPricedItems(source, venue) {
-  // Preserve inventories already created by menuFetcher.
-  if (Array.isArray(source.items) && source.items.length) {
+  // Preserve existing inventories, such as Santa Cruz Diner's.
+  if (
+    Array.isArray(source.items) &&
+    source.items.length > 0
+  ) {
     return;
   }
 
+  // This fallback recognizes menus printed as:
+  // Item name
+  // $price
+  // Optional description
   const lines = String(source.text || "")
     .split(/\r?\n/)
-    .map(line => line.trim())
+    .map((line) => line.trim())
     .filter(Boolean);
 
   const pricePattern = /^[$£€]\s*\d+(?:[.,]\d{1,2})?$/;
@@ -91,8 +98,10 @@ function inventoryPricedItems(source, venue) {
     });
 
     if (seen.has(id)) continue;
+
     seen.add(id);
 
+    // Keep the source wording and line order intact.
     const evidence = lines
       .slice(
         entry.nameIndex,
@@ -106,7 +115,6 @@ function inventoryPricedItems(source, venue) {
       name: entry.name,
       price: entry.price,
       section: "",
-      description: "",
       evidence,
       listedIngredients: [],
       possibleAllergens: [],
@@ -117,10 +125,10 @@ function inventoryPricedItems(source, venue) {
     });
   }
 
-  if (items.length) {
+  if (items.length > 0) {
     source.items = items;
 
-    // Finding priced items does not prove complete coverage.
+    // This heuristic does not prove full-menu coverage.
     source.inventoryComplete = false;
 
     console.log(
@@ -132,6 +140,7 @@ function inventoryPricedItems(source, venue) {
 async function fetchPdfText(venue) {
   let url = new URL(venue.menuUrl);
 
+  // Allowed hosts come from server configuration.
   const allowedHosts = new Set([
     url.hostname,
     ...(Array.isArray(venue.menuAllowedHosts)
@@ -139,6 +148,7 @@ async function fetchPdfText(venue) {
       : []),
   ]);
 
+  // Piccino's official PDF redirects to Squarespace.
   if (url.hostname === "www.piccino.com") {
     allowedHosts.add("static1.squarespace.com");
   }
@@ -239,7 +249,9 @@ async function fetchPdfText(venue) {
     const text = String(result.text || "")
       .replace(/\u00a0/g, " ")
       .split(/\r?\n/)
-      .map(line => line.replace(/[ \t]+/g, " ").trim())
+      .map((line) =>
+        line.replace(/[ \t]+/g, " ").trim()
+      )
       .filter(Boolean)
       .join("\n");
 
@@ -275,7 +287,7 @@ async function fetchPdfText(venue) {
 
 async function readMenuUrl(
   venue,
-  { preview = true, onProgress = () => {} } = {}
+  { preview = true } = {}
 ) {
   if (!venue?.menuUrl) {
     throw new Error(
@@ -289,20 +301,23 @@ async function readMenuUrl(
     .endsWith(".pdf");
 
   console.log(
-    `[menu] Fetching menu source for ${venue.displayName.text}…`
+    "[menu] Fetching the configured menu source…"
   );
 
   const source = isPdf
     ? await fetchPdfText(venue)
     : await fetchMenuText(venue.id);
 
+  // HTML menus without cards get a price-line inventory.
+  // Keep the existing PDF extraction path unchanged.
   if (!isPdf) {
     inventoryPricedItems(source, venue);
   }
 
   const dishesById = new Map();
-  const failedPartsByIndex = new Map();
+  const failedParts = [];
   let firstBatchError;
+
   let validationNeedsReview = Boolean(source.truncated);
 
   const hasInventory =
@@ -315,11 +330,11 @@ async function readMenuUrl(
       : source.items
     : [];
 
-  // Retain every inventoried item if Gemini omits it or fails.
+  // Keep all inventoried items visible, even if Gemini
+  // cannot finish extracting their details.
   for (const item of inventory) {
     dishesById.set(item.id, {
       ...item,
-      description: item.description || "",
       sourceUrl: source.sourceUrl,
       extractionStatus: "pending",
     });
@@ -338,13 +353,19 @@ async function readMenuUrl(
       batches.push({
         ...source,
         items,
-        text: items.map(item => item.evidence).join("\n\n"),
+        text: items
+          .map((item) => item.evidence)
+          .join("\n\n"),
       });
     }
   } else {
     const excerpts = splitMenu(source.text);
 
-    for (const text of preview ? excerpts.slice(0, 1) : excerpts) {
+    const selectedExcerpts = preview
+      ? excerpts.slice(0, 1)
+      : excerpts;
+
+    for (const text of selectedExcerpts) {
       batches.push({
         ...source,
         items: [],
@@ -353,46 +374,11 @@ async function readMenuUrl(
     }
   }
 
-  let nextBatch = 0;
-  let completedBatches = 0;
-  let stopped = false;
-
-  onProgress({
-    completed: 0,
-    total: batches.length,
-    unit: "batches",
-  });
-
-  function retainDish(dish, batch) {
-    // Inventory IDs must belong to this batch.
-    if (
-      hasInventory &&
-      !batch.items.some(item => item.id === dish.id)
-    ) {
-      validationNeedsReview = true;
-      return;
-    }
-
-    const id = hasInventory
-      ? dish.id
-      : dishKey(venue.id, dish);
-
-    dishesById.set(id, {
-      ...dishesById.get(id),
-      ...dish,
-      id,
-      description: dish.description || "",
-      sourceUrl: source.sourceUrl,
-      extractionStatus: "readable",
-    });
-  }
-
-  async function processBatch(index) {
+  for (let index = 0; index < batches.length; index++) {
     const batch = batches[index];
 
     console.log(
-      `[menu] ${venue.displayName.text}: ` +
-      `reading part ${index + 1}/${batches.length}…`
+      `[menu] Reading part ${index + 1}/${batches.length}…`
     );
 
     try {
@@ -405,60 +391,72 @@ async function readMenuUrl(
       }
 
       for (const dish of output.dishes) {
-        retainDish(dish, batch);
+        const id = hasInventory
+          ? dish.id
+          : dishKey(venue.id, dish);
+
+        dishesById.set(id, {
+          ...dish,
+          id,
+          sourceUrl: source.sourceUrl,
+          extractionStatus: "readable",
+        });
       }
 
       if (hasInventory) {
         const missing = batch.items.filter(
-          item =>
+          (item) =>
             dishesById.get(item.id)?.extractionStatus !==
             "readable"
         );
 
-        // Retry omitted items once unless another batch has
-        // already found a provider-wide failure.
-        if (missing.length && !stopped) {
-          const repairBatch = {
+        // Retry omitted inventory items once.
+        if (missing.length) {
+          const repair = await readMenu({
             ...source,
             items: missing,
             text: missing
-              .map(item => item.evidence)
+              .map((item) => item.evidence)
               .join("\n\n"),
-          };
-
-          const repair = await readMenu(repairBatch);
+          });
 
           for (const dish of repair.dishes) {
-            retainDish(dish, repairBatch);
-          }
-        }
-
-        for (const item of missing) {
-          if (
-            dishesById.get(item.id)?.extractionStatus !==
-            "readable"
-          ) {
-            validationNeedsReview = true;
-
-            dishesById.set(item.id, {
-              ...dishesById.get(item.id),
-              extractionStatus: "needs_review",
-              extractionError:
-                "Menu details could not be extracted reliably.",
+            dishesById.set(dish.id, {
+              ...dish,
+              sourceUrl: source.sourceUrl,
+              extractionStatus: "readable",
             });
+          }
+
+          for (const item of missing) {
+            if (
+              dishesById.get(item.id)?.extractionStatus !==
+              "readable"
+            ) {
+              validationNeedsReview = true;
+
+              dishesById.set(item.id, {
+                ...item,
+                sourceUrl: source.sourceUrl,
+                extractionStatus: "needs_review",
+                extractionError:
+                  "Menu details could not be extracted reliably.",
+              });
+            }
           }
         }
       }
     } catch (error) {
       firstBatchError ||= error;
-      validationNeedsReview = true;
 
       console.error(
-        `[menu] Part ${index + 1} failed. Code:`,
-        error.status || error.code || error.name || "unknown"
+        `[menu] Part ${index + 1} failed:`,
+        error.message || error
       );
 
-      failedPartsByIndex.set(index, {
+      validationNeedsReview = true;
+
+      failedParts.push({
         part: index + 1,
         error: "This menu section could not be fully read.",
       });
@@ -469,7 +467,8 @@ async function readMenuUrl(
           "readable"
         ) {
           dishesById.set(item.id, {
-            ...dishesById.get(item.id),
+            ...item,
+            sourceUrl: source.sourceUrl,
             extractionStatus: "needs_review",
             extractionError:
               "Menu details could not be extracted reliably.",
@@ -477,50 +476,34 @@ async function readMenuUrl(
         }
       }
 
+      // Stop on provider-wide quota or access failures.
       if (
-        [400, 401, 403, 404, 429].includes(
+        [429, 401, 403].includes(
           Number(error.status || error.code)
-        ) ||
-        /API_KEY_INVALID|API key not valid/i.test(
-          String(error.message || "")
         )
       ) {
-        stopped = true;
+        if (!dishesById.size) {
+          throw error;
+        }
+
+        for (
+          let remaining = index + 1;
+          remaining < batches.length;
+          remaining++
+        ) {
+          failedParts.push({
+            part: remaining + 1,
+            error:
+              "Reading stopped because of a provider limit.",
+          });
+        }
+
+        break;
       }
     }
   }
 
-  async function worker() {
-    while (!stopped && nextBatch < batches.length) {
-      const index = nextBatch++;
-      await processBatch(index);
-      completedBatches++;
-
-      onProgress({
-        completed: completedBatches,
-        total: batches.length,
-        unit: "batches",
-      });
-    }
-  }
-
-  // Two in-flight batches per extraction.
-  await Promise.all(
-    Array.from(
-      { length: Math.min(2, batches.length) },
-      () => worker()
-    )
-  );
-
-  // These batches were never started after a provider failure.
-  for (let index = nextBatch; index < batches.length; index++) {
-    failedPartsByIndex.set(index, {
-      part: index + 1,
-      error:
-        "Reading stopped because of a provider configuration or usage limit.",
-    });
-  }
-
+  // Mark entries skipped after a provider failure.
   for (const [id, dish] of dishesById) {
     if (dish.extractionStatus === "pending") {
       dishesById.set(id, {
@@ -533,20 +516,15 @@ async function readMenuUrl(
 
   let dishes = [...dishesById.values()];
 
-  if (!hasInventory) {
-    dishes.sort(
-      (a, b) =>
-        source.text.indexOf(a.name) -
-        source.text.indexOf(b.name)
-    );
-  }
-
   if (preview) {
     dishes = dishes.slice(0, 8);
   }
 
   if (!dishes.length) {
-    if (firstBatchError) throw firstBatchError;
+    // Preserve the actual provider or validation error.
+    if (firstBatchError) {
+      throw firstBatchError;
+    }
 
     throw new Error(
       "No dishes could be read from this menu."
@@ -554,14 +532,13 @@ async function readMenuUrl(
   }
 
   const extracted = dishes.filter(
-    item => item.extractionStatus === "readable"
+    (item) => item.extractionStatus === "readable"
   ).length;
 
   const failed = dishes.length - extracted;
 
   console.log(
-    `[menu] Finished ${venue.displayName.text}: ` +
-    `${dishes.length} dishes listed, ` +
+    `[menu] Finished: ${dishes.length} dishes listed, ` +
     `${extracted} with extracted details.`
   );
 
@@ -586,8 +563,7 @@ async function readMenuUrl(
       failed,
       remaining: 0,
     },
-    failedParts: [...failedPartsByIndex.values()]
-      .sort((a, b) => a.part - b.part),
+    failedParts,
   };
 }
 

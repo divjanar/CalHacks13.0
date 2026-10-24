@@ -8,3 +8,10 @@
 **/cache
 **/.menu-cache*
 **/.reviewed-menu-cache*
+.local-rollback-backups
+.agents
+.claude
+.browser-check
+account-flow.txt
+**/*.bak
+**/test-*.png

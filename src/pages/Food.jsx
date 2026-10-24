@@ -255,7 +255,7 @@ export default function Food() {
                   ? 'Conflict identified'
                   : 'Warning identified'
                 : !matching.assessed
-                  ? 'Dietary review incomplete'
+                  ? 'Check with the waiter'
                   : matching.recommended
                     ? 'No conflict identified'
                     : 'Needs confirmation'
@@ -330,8 +330,9 @@ export default function Food() {
 
                   {!matching.hasConflict && (
                     <p>
-                      {matching.recommendationReason ||
-                        'Confirm ingredients, preparation, sourcing, and cross-contact with the restaurant before choosing.'}
+                      {matching.assessed
+                        ? matching.recommendationReason || 'Confirm ingredients, preparation, sourcing, and cross-contact with the restaurant before choosing.'
+                        : 'Dietary compatibility is unconfirmed. Ask about ingredients, sourcing, and cross-contact.'}
                     </p>
                   )}
                 </article>

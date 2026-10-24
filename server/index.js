@@ -14,6 +14,7 @@ const { registerMenu } = require("./menu");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const HOST = process.env.HOST || "0.0.0.0";
 
 app.use(
   cors({
@@ -21,7 +22,9 @@ app.use(
       "http://localhost:5173",
       "http://localhost:5174",
       "https://table8.vip",
+      "https://www.table8.vip",
       "https://cal-hacks13-0-8miz.vercel.app",
+      ...(process.env.ALLOWED_ORIGINS || "").split(",").map(origin => origin.trim()).filter(Boolean),
     ],
   })
 );
@@ -84,9 +87,7 @@ function cleanName(value) {
     .trim()
     .replace(/\s+/g, " ");
 
-  if (!cleaned || cleaned.length > 80) {
-    return null;
-  }
+  if (!cleaned || cleaned.length > 80) return null;
 
   return cleaned;
 }
@@ -99,10 +100,8 @@ function getToday() {
     day: "numeric",
   }).formatToParts(new Date());
 
-  const value = (type) =>
-    Number(
-      parts.find((part) => part.type === type).value
-    );
+  const value = type =>
+    Number(parts.find(part => part.type === type).value);
 
   return {
     year: value("year"),
@@ -113,13 +112,11 @@ function getToday() {
 
 // Authenticate before accepting an uploaded document.
 async function authenticateAgeCheck(req, res, next) {
-  const authorization =
-    req.headers.authorization || "";
+  const authorization = req.headers.authorization || "";
 
   if (!authorization.startsWith("Bearer ")) {
     return res.status(401).json({
-      error:
-        "Please sign in before checking your document.",
+      error: "Please sign in before checking your document.",
     });
   }
 
@@ -129,20 +126,17 @@ async function authenticateAgeCheck(req, res, next) {
     !process.env.AGE_CHECK_CALLBACK_SECRET
   ) {
     return res.status(503).json({
-      error:
-        "The document-check service is not configured.",
+      error: "The document-check service is not configured.",
     });
   }
 
   try {
-    // Use a separate authenticated client for each request.
+    // Never share authenticated clients between users.
     const client = new ConvexHttpClient(
       process.env.CONVEX_URL
     );
 
-    client.setAuth(
-      authorization.slice(7).trim()
-    );
+    client.setAuth(authorization.slice(7).trim());
 
     req.ageCheckIdentity = await client.query(
       makeFunctionReference("verification:getContext"),
@@ -167,9 +161,11 @@ app.get("/api/health", (req, res) => {
   res.json({
     success: true,
     message: "Table 8 backend is running!",
+    revision: process.env.RENDER_GIT_COMMIT || null,
   });
 });
 
+// Keep the existing URL, but require name and DOB checks.
 app.post(
   "/api/age-check",
   authenticateAgeCheck,
@@ -178,8 +174,7 @@ app.post(
     try {
       if (!req.file) {
         return res.status(400).json({
-          error:
-            "Upload an image using the field name image.",
+          error: "Upload an image using the field name image.",
         });
       }
 
@@ -190,7 +185,7 @@ app.post(
 
       if (
         Object.keys(req.body || {}).some(
-          (field) => !allowedFields.has(field)
+          field => !allowedFields.has(field)
         )
       ) {
         return res.status(400).json({
@@ -199,13 +194,8 @@ app.post(
         });
       }
 
-      const firstName = cleanName(
-        req.body?.firstName
-      );
-
-      const lastName = cleanName(
-        req.body?.lastName
-      );
+      const firstName = cleanName(req.body?.firstName);
+      const lastName = cleanName(req.body?.lastName);
 
       if (!firstName || !lastName) {
         return res.status(400).json({
@@ -214,38 +204,29 @@ app.post(
         });
       }
 
-      const mimeType = detectImageType(
-        req.file.buffer
-      );
+      const mimeType = detectImageType(req.file.buffer);
 
       if (!mimeType) {
         return res.status(415).json({
-          error:
-            "Please upload a JPEG or PNG image.",
+          error: "Please upload a JPEG or PNG image.",
         });
       }
 
       const extraction = await readIdentity(
         req.file.buffer,
         mimeType,
-        {
-          firstName,
-          lastName,
-        }
+        { firstName, lastName }
       );
 
       const ageResult =
         extraction.dobStatus === "readable"
-          ? checkAge(
-              extraction.dob,
-              getToday()
-            )
+          ? checkAge(extraction.dob, getToday())
           : {
               status: "needs_review",
               eligible: null,
             };
 
-      // A clearly underage DOB cannot pass.
+      // A clearly underage DOB cannot pass, regardless of the name.
       if (
         ageResult.status === "under_18" &&
         ageResult.eligible === false
@@ -258,9 +239,7 @@ app.post(
         });
       }
 
-      if (
-        extraction.nameMatch === "mismatch"
-      ) {
+      if (extraction.nameMatch === "mismatch") {
         return res.json({
           status: "name_mismatch",
           eligible: null,
@@ -272,8 +251,7 @@ app.post(
       if (
         extraction.nameMatch !== "matched" ||
         extraction.nameStatus !== "readable" ||
-        ageResult.status !==
-          "meets_age_requirement" ||
+        ageResult.status !== "meets_age_requirement" ||
         ageResult.eligible !== true
       ) {
         return res.json({
@@ -284,8 +262,8 @@ app.post(
         });
       }
 
-      // Only save after both name and age checks pass.
-      // The account identity comes from Convex authentication.
+      // Only this passing branch can save a result.
+      // Identity comes from the authenticated Convex query.
       const callback = await fetch(
         new URL(
           "/age-check-result",
@@ -301,8 +279,7 @@ app.post(
           body: JSON.stringify({
             tokenIdentifier:
               req.ageCheckIdentity.tokenIdentifier,
-            email:
-              req.ageCheckIdentity.email,
+            email: req.ageCheckIdentity.email,
             legalFirstName: firstName,
             legalLastName: lastName,
             nameMatched: true,
@@ -318,21 +295,17 @@ app.post(
           callback.status
         );
 
-        return res
-          .status(
+        return res.status(
+          callback.status === 409 ? 409 : 502
+        ).json({
+          error:
             callback.status === 409
-              ? 409
-              : 502
-          )
-          .json({
-            error:
-              callback.status === 409
-                ? "The result could not be saved. If your existing account has a different legal name, account review is required."
-                : "The checks passed, but the result could not be saved. Please try again.",
-          });
+              ? "The result could not be saved. If your existing account has a different legal name, account review is required."
+              : "The checks passed, but the result could not be saved. Please try again.",
+        });
       }
 
-      // Do not return the extracted DOB or document text.
+      // Never return the extracted DOB or document text.
       return res.json({
         status: "meets_age_requirement",
         eligible: true,
@@ -340,7 +313,7 @@ app.post(
         saved: true,
       });
     } catch (error) {
-      // Do not log uploaded documents or account secrets.
+      // Never log images, names, DOBs, tokens, or secrets.
       console.error(
         "Document check failed. Code:",
         error.status || "unknown"
@@ -356,15 +329,13 @@ app.post(
   }
 );
 
-// Preserve existing menu routes.
+// Preserve your existing menu functionality.
 registerMenu(app);
 
 app.use((error, req, res, next) => {
-  clearUpload(req);
+  if (res.headersSent) return next(error);
 
-  if (res.headersSent) {
-    return next(error);
-  }
+  clearUpload(req);
 
   if (error instanceof multer.MulterError) {
     return res.status(400).json({
@@ -377,15 +348,13 @@ app.use((error, req, res, next) => {
 
   if (error.type === "entity.parse.failed") {
     return res.status(400).json({
-      error:
-        "The request contains invalid JSON.",
+      error: "The request contains invalid JSON.",
     });
   }
 
   if (error.type === "entity.too.large") {
     return res.status(413).json({
-      error:
-        "The request is too large.",
+      error: "The request is too large.",
     });
   }
 
@@ -399,9 +368,8 @@ app.use((error, req, res, next) => {
   });
 });
 
-// Render supplies PORT and needs a publicly reachable interface.
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(PORT, HOST, () => {
   console.log(
-    `Table 8 backend listening on port ${PORT}`
+    `Table 8 backend: http://localhost:${PORT}`
   );
 });
