@@ -1,0 +1,583 @@
+[
+  {
+    "id": "ChIJayGBoiRAjoARzA3Sc9KqN3g",
+    "websiteUri": "https://santacruzdiner.com/",
+    "menuUrl": "https://santacruzdiner.com/-food-menu",
+    "formattedAddress": "909 Ocean St, Santa Cruz, CA 95060, USA",
+    "location": {
+      "latitude": 36.9803952,
+      "longitude": -122.0218917
+    },
+    "googleMapsUri": "https://maps.google.com/?cid=8662580229133438412&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+    "displayName": {
+      "text": "Santa Cruz Diner",
+      "languageCode": "en"
+    },
+    "priceRange": {
+      "startPrice": {
+        "currencyCode": "USD",
+        "units": "20"
+      },
+      "endPrice": {
+        "currencyCode": "USD",
+        "units": "30"
+      }
+    }
+  },
+  {
+    "id": "ChIJH8KuM5dqjoARx8-6jvYw8Is",
+    "formattedAddress": "49A Municipal Wharf, Santa Cruz, CA 95060, USA",
+    "location": {
+      "latitude": 36.9589407,
+      "longitude": -122.01841809999999
+    },
+    "googleMapsUri": "https://maps.google.com/?cid=10083613401197236167&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+    "displayName": {
+      "text": "Makai Island Kitchen & Groggery",
+      "languageCode": "en"
+    },
+    "priceRange": {
+      "startPrice": {
+        "currencyCode": "USD",
+        "units": "20"
+      },
+      "endPrice": {
+        "currencyCode": "USD",
+        "units": "30"
+      }
+    },
+    "menuUrl": null
+  },
+  {
+    "id": "ChIJrSzz8JlBjoAR4EwBj-WBV4E",
+    "formattedAddress": "1319 Pacific Ave, Santa Cruz, CA 95060, USA",
+    "location": {
+      "latitude": 36.9738006,
+      "longitude": -122.02622960000001
+    },
+    "googleMapsUri": "https://maps.google.com/?cid=9320060776813251808&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+    "displayName": {
+      "text": "Pretty Good Advice",
+      "languageCode": "en"
+    },
+    "priceRange": {
+      "startPrice": {
+        "currencyCode": "USD",
+        "units": "10"
+      },
+      "endPrice": {
+        "currencyCode": "USD",
+        "units": "20"
+      }
+    },
+    "menuUrl": null
+  },
+  {
+    "id": "ChIJvXl2weCAhYARjSxnhzrBfNc",
+    "formattedAddress": "900 North Point St F301, San Francisco, CA 94109, USA",
+    "location": {
+      "latitude": 37.805932899999995,
+      "longitude": -122.42325890000001
+    },
+    "googleMapsUri": "https://maps.google.com/?cid=15527498072390577293&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+    "regularOpeningHours": {
+      "openNow": true,
+      "periods": [
+        {
+          "open": {
+            "day": 0,
+            "hour": 9,
+            "minute": 0
+          },
+          "close": {
+            "day": 0,
+            "hour": 22,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 1,
+            "hour": 9,
+            "minute": 0
+          },
+          "close": {
+            "day": 1,
+            "hour": 22,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 2,
+            "hour": 9,
+            "minute": 0
+          },
+          "close": {
+            "day": 2,
+            "hour": 22,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 3,
+            "hour": 9,
+            "minute": 0
+          },
+          "close": {
+            "day": 3,
+            "hour": 22,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 4,
+            "hour": 9,
+            "minute": 0
+          },
+          "close": {
+            "day": 4,
+            "hour": 22,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 5,
+            "hour": 9,
+            "minute": 0
+          },
+          "close": {
+            "day": 5,
+            "hour": 23,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 6,
+            "hour": 9,
+            "minute": 0
+          },
+          "close": {
+            "day": 6,
+            "hour": 23,
+            "minute": 0
+          }
+        }
+      ],
+      "weekdayDescriptions": [
+        "Monday: 9:00 AM – 10:00 PM",
+        "Tuesday: 9:00 AM – 10:00 PM",
+        "Wednesday: 9:00 AM – 10:00 PM",
+        "Thursday: 9:00 AM – 10:00 PM",
+        "Friday: 9:00 AM – 11:00 PM",
+        "Saturday: 9:00 AM – 11:00 PM",
+        "Sunday: 9:00 AM – 10:00 PM"
+      ],
+      "nextCloseTime": "2026-10-21T05:00:00Z"
+    },
+    "displayName": {
+      "text": "Ghirardelli Chocolate Experience",
+      "languageCode": "en"
+    },
+    "menuUrl": null
+  },
+  {
+    "id": "ChIJ90JImRKBhYARXrwUAyZIhqw",
+    "formattedAddress": "87 McAllister St, San Francisco, CA 94102, USA",
+    "location": {
+      "latitude": 37.7808373,
+      "longitude": -122.4133492
+    },
+    "googleMapsUri": "https://maps.google.com/?cid=12431703149500480606&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+    "regularOpeningHours": {
+      "openNow": true,
+      "periods": [
+        {
+          "open": {
+            "day": 0,
+            "hour": 8,
+            "minute": 0
+          },
+          "close": {
+            "day": 0,
+            "hour": 15,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 1,
+            "hour": 8,
+            "minute": 0
+          },
+          "close": {
+            "day": 1,
+            "hour": 15,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 2,
+            "hour": 8,
+            "minute": 0
+          },
+          "close": {
+            "day": 2,
+            "hour": 15,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 3,
+            "hour": 8,
+            "minute": 0
+          },
+          "close": {
+            "day": 3,
+            "hour": 15,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 4,
+            "hour": 8,
+            "minute": 0
+          },
+          "close": {
+            "day": 4,
+            "hour": 15,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 5,
+            "hour": 8,
+            "minute": 0
+          },
+          "close": {
+            "day": 5,
+            "hour": 15,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 6,
+            "hour": 8,
+            "minute": 0
+          },
+          "close": {
+            "day": 6,
+            "hour": 15,
+            "minute": 0
+          }
+        }
+      ],
+      "weekdayDescriptions": [
+        "Monday: 8:00 AM – 3:00 PM",
+        "Tuesday: 8:00 AM – 3:00 PM",
+        "Wednesday: 8:00 AM – 3:00 PM",
+        "Thursday: 8:00 AM – 3:00 PM",
+        "Friday: 8:00 AM – 3:00 PM",
+        "Saturday: 8:00 AM – 3:00 PM",
+        "Sunday: 8:00 AM – 3:00 PM"
+      ],
+      "nextCloseTime": "2026-10-20T22:00:00Z"
+    },
+    "displayName": {
+      "text": "Arsicault Bakery",
+      "languageCode": "en"
+    },
+    "priceRange": {
+      "startPrice": {
+        "currencyCode": "USD",
+        "units": "10"
+      },
+      "endPrice": {
+        "currencyCode": "USD",
+        "units": "20"
+      }
+    },
+    "menuUrl": null
+  },
+  {
+    "id": "ChIJZy35-bl_j4ARBBvSPp-LhIE",
+    "formattedAddress": "1001 Minnesota St, San Francisco, CA 94107, USA",
+    "location": {
+      "latitude": 37.757575599999996,
+      "longitude": -122.38996329999999
+    },
+    "googleMapsUri": "https://maps.google.com/?cid=9332737843888528132&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+    "regularOpeningHours": {
+      "openNow": false,
+      "periods": [
+        {
+          "open": {
+            "day": 0,
+            "hour": 11,
+            "minute": 0
+          },
+          "close": {
+            "day": 0,
+            "hour": 14,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 0,
+            "hour": 17,
+            "minute": 0
+          },
+          "close": {
+            "day": 0,
+            "hour": 21,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 3,
+            "hour": 11,
+            "minute": 0
+          },
+          "close": {
+            "day": 3,
+            "hour": 14,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 3,
+            "hour": 17,
+            "minute": 0
+          },
+          "close": {
+            "day": 3,
+            "hour": 21,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 4,
+            "hour": 11,
+            "minute": 0
+          },
+          "close": {
+            "day": 4,
+            "hour": 14,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 4,
+            "hour": 17,
+            "minute": 0
+          },
+          "close": {
+            "day": 4,
+            "hour": 21,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 5,
+            "hour": 11,
+            "minute": 0
+          },
+          "close": {
+            "day": 5,
+            "hour": 14,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 5,
+            "hour": 17,
+            "minute": 0
+          },
+          "close": {
+            "day": 5,
+            "hour": 21,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 6,
+            "hour": 11,
+            "minute": 0
+          },
+          "close": {
+            "day": 6,
+            "hour": 14,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 6,
+            "hour": 17,
+            "minute": 0
+          },
+          "close": {
+            "day": 6,
+            "hour": 21,
+            "minute": 0
+          }
+        }
+      ],
+      "weekdayDescriptions": [
+        "Monday: Closed",
+        "Tuesday: Closed",
+        "Wednesday: 11:00 AM – 2:00 PM, 5:00 – 9:00 PM",
+        "Thursday: 11:00 AM – 2:00 PM, 5:00 – 9:00 PM",
+        "Friday: 11:00 AM – 2:00 PM, 5:00 – 9:00 PM",
+        "Saturday: 11:00 AM – 2:00 PM, 5:00 – 9:00 PM",
+        "Sunday: 11:00 AM – 2:00 PM, 5:00 – 9:00 PM"
+      ],
+      "nextOpenTime": "2026-10-21T18:00:00Z"
+    },
+    "displayName": {
+      "text": "Piccino",
+      "languageCode": "en"
+    },
+    "priceRange": {
+      "startPrice": {
+        "currencyCode": "USD",
+        "units": "30"
+      },
+      "endPrice": {
+        "currencyCode": "USD",
+        "units": "80"
+      }
+    },
+    "menuUrl": null
+  },
+  {
+    "id": "ChIJj3EJW6KAhYARB-Dl9_ArzVM",
+    "formattedAddress": "586 Hayes St, San Francisco, CA 94102, USA",
+    "location": {
+      "latitude": 37.776618,
+      "longitude": -122.42604549999999
+    },
+    "googleMapsUri": "https://maps.google.com/?cid=6038530989324886023&g_mp=Cidnb29nbGUubWFwcy5wbGFjZXMudjEuUGxhY2VzLlNlYXJjaFRleHQQAhgEIAA",
+    "regularOpeningHours": {
+      "openNow": true,
+      "periods": [
+        {
+          "open": {
+            "day": 0,
+            "hour": 11,
+            "minute": 0
+          },
+          "close": {
+            "day": 0,
+            "hour": 23,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 1,
+            "hour": 11,
+            "minute": 0
+          },
+          "close": {
+            "day": 1,
+            "hour": 23,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 2,
+            "hour": 11,
+            "minute": 0
+          },
+          "close": {
+            "day": 2,
+            "hour": 23,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 3,
+            "hour": 11,
+            "minute": 0
+          },
+          "close": {
+            "day": 3,
+            "hour": 23,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 4,
+            "hour": 11,
+            "minute": 0
+          },
+          "close": {
+            "day": 4,
+            "hour": 23,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 5,
+            "hour": 11,
+            "minute": 0
+          },
+          "close": {
+            "day": 5,
+            "hour": 23,
+            "minute": 0
+          }
+        },
+        {
+          "open": {
+            "day": 6,
+            "hour": 11,
+            "minute": 0
+          },
+          "close": {
+            "day": 6,
+            "hour": 23,
+            "minute": 0
+          }
+        }
+      ],
+      "weekdayDescriptions": [
+        "Monday: 11:00 AM – 11:00 PM",
+        "Tuesday: 11:00 AM – 11:00 PM",
+        "Wednesday: 11:00 AM – 11:00 PM",
+        "Thursday: 11:00 AM – 11:00 PM",
+        "Friday: 11:00 AM – 11:00 PM",
+        "Saturday: 11:00 AM – 11:00 PM",
+        "Sunday: 11:00 AM – 11:00 PM"
+      ],
+      "nextCloseTime": "2026-10-21T06:00:00Z"
+    },
+    "displayName": {
+      "text": "Salt & Straw",
+      "languageCode": "en"
+    },
+    "menuUrl": null
+  }
+]
