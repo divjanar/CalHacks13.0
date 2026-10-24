@@ -187,6 +187,12 @@ test('invalid dietary evidence gets one targeted repair and never an endless ret
   });
   const result=await reader.assessMenu(dishes,preferences,{avoidedGroups:['beef','pork']});
   assert.equal(calls,2);assert.equal(result[0].concerns[0].restriction,'Milk');
+  assert.equal(result[0].ingredientCompleteness,'unknown');
+  assert.equal(result[0].sourcing,'unknown');
+  assert.equal(result[0].crossContact,'unknown');
+  reader=readerWith(async()=>({text:JSON.stringify({assessments:[{dishId:'soup',profileStatus:'potential',reason:'No listed conflict',concerns:[]}]})}));
+  const incomplete=await reader.assessMenu([{...dishes[0],extractionStatus:'pending'}],preferences,null);
+  assert.equal(incomplete[0].profileStatus,'unknown');
   calls=0;reader=readerWith(async()=>{calls++;return {text:JSON.stringify({assessments:[]})};});
   await assert.rejects(reader.assessMenu(dishes,preferences,null),/after one repair attempt/);
   assert.equal(calls,2);
@@ -204,4 +210,177 @@ test('duplicate menu headings merge ingredients and concerns without hiding conf
   assert.equal(merged[0].matching.recommended,false);
   assert.match(merged[0].evidence,/butter/);
   assert.equal(deduplicateDishes([a,{...a,matching:{...a.matching,assessed:false}}])[0].matching.recommended,false);
+});
+
+
+test('HTML inventory keeps all real cards and preserves distinct same-name options', () => {
+  const { parseMenuHtml } = require('./menuFetcher');
+  const card = (description) => `<div class="food-item-holder"><div class="food-item-title"><h3>Vegetarian</h3></div><div class="food-price">$19.95</div><div class="food-item-description">${description}</div></div>`;
+  const html = `<main><div class="food-menu-grid-item-content"><h2>Skillets</h2><p>Served with eggs.</p><div class="food-menu-content">${card('Avocado and cheese')}</div></div><div class="food-menu-grid-item-content"><h2>Crepes</h2><p>Served with salsa.</p><div class="food-menu-content">${card('Spinach and onion')}</div></div></main>`;
+  const source = parseMenuHtml(html,{id:'test',displayName:{text:'Test Diner'}},'https://example.com/menu');
+  assert.equal(source.items.length,2);assert.equal(source.inventoryComplete,true);
+  assert.notEqual(source.items[0].sourceItemId,source.items[1].sourceItemId);
+  assert.equal(source.items[0].price,'$19.95');assert.match(source.items[1].evidence,/Served with salsa/);
+});
+
+test('full inventory is visible before Gemini completes, and omissions are retried without dropping dishes', async () => {
+  const items=Array.from({length:19},(_,i)=>({...dish(`item-${i}`),sourceItemId:`source-${i}`,extractionStatus:'pending'}));
+  const seen=new Map();let release,markStarted;
+  const gate=new Promise(resolve=>release=resolve),started=new Promise(resolve=>markStarted=resolve);
+  const h=harness({fetchMenuText:async()=>({...source,items,inventoryComplete:true}),readMenu:async input=>{
+    markStarted();await gate;
+    for(const item of input.items)seen.set(item.sourceItemId,(seen.get(item.sourceItemId)||0)+1);
+    return {status:'readable',dishes:input.items.filter(item=>item.sourceItemId!=='source-3'||seen.get(item.sourceItemId)>1).map(item=>({...item,extractionStatus:'readable'}))};
+  }});
+  const job=await h.call('POST','/api/menu/jobs',{venueId:VENUE,mode:'full'});await started;
+  let state=(await h.call('GET',`/api/menu/jobs/${job.body.jobId}`)).body;
+  assert.equal(state.result.dishes.length,19);assert.equal(state.result.coverage.remaining,19);
+  release();state=await h.completed(job.body.jobId);
+  assert.equal(state.result.dishes.length,19);assert.equal(state.result.coverage.extracted,19);
+  assert.equal(state.result.coverage.remaining,0);assert.equal(state.result.coverageVerified,true);
+  assert.equal(seen.size,19);assert.equal(seen.get('source-3'),2);
+});
+
+test('provider failure retains every source item as unconfirmed instead of presenting a tiny full menu', async () => {
+  const items=Array.from({length:11},(_,i)=>({...dish(`item-${i}`),sourceItemId:`source-${i}`,extractionStatus:'pending'}));
+  const assessed=[];
+  const h=harness({fetchMenuText:async()=>({...source,items,inventoryComplete:true}),readMenu:async()=>{throw new Error('Gemini unavailable');},assessMenu:async dishes=>{assessed.push(...dishes.map(item=>item.id));return dishes.map(item=>({dishId:item.id,profileStatus:'unknown',reason:'Ingredients, sourcing and cross-contact unknown.',concerns:[]}));}});
+  const job=await h.call('POST','/api/menu/jobs',{venueId:VENUE,mode:'full'});
+  const result=await h.completed(job.body.jobId);
+  assert.equal(result.result.dishes.length,11);assert.equal(result.result.coverage.failed,11);
+  assert.equal(result.result.coverageVerified,false);
+  assert.ok(result.result.dishes.every(item=>item.extractionStatus==='needs_review'));
+  const review=await h.call('POST','/api/menu/reviews',{menuJobId:job.body.jobId,preferences:{diet:'Vegan',allergies:[]}});
+  assert.equal(review.status,202);
+  const checked=await h.completed(review.body.jobId);
+  assert.equal(checked.result.assessments.length,11);
+  assert.equal(new Set(assessed).size,11);
+});
+
+test('invalid optional Gemini fields do not remove a verified menu item', async t => {
+  const key=process.env.GEMINI_API_KEY,model=process.env.GEMINI_MODEL;
+  process.env.GEMINI_API_KEY='mock';process.env.GEMINI_MODEL='mock';
+  t.after(()=>{if(key===undefined)delete process.env.GEMINI_API_KEY;else process.env.GEMINI_API_KEY=key;if(model===undefined)delete process.env.GEMINI_MODEL;else process.env.GEMINI_MODEL=model;});
+  const anchor={...dish('source-rice'),sourceItemId:'source-rice',name:'Rice',description:'Rice with sauce',evidence:'Rice $5 with sauce'};
+  const reader=readerWith(async()=>({text:JSON.stringify({status:'readable',dishes:[{...anchor,description:'Invented description',price:'$999',evidence:'Paraphrased evidence',listedIngredients:['rice','imaginary ingredient']} ]})}));
+  const result=await reader.readMenu({restaurant:'Test',text:anchor.evidence,items:[anchor]});
+  assert.equal(result.dishes.length,1);assert.equal(result.dishes[0].price,'$5');
+  assert.equal(result.dishes[0].description,anchor.description);assert.equal(result.dishes[0].evidence,anchor.evidence);
+  assert.deepEqual(result.dishes[0].listedIngredients,['rice']);
+});
+
+
+test('exact repeated source cards count once without marking inventory incomplete', () => {
+  const { parseMenuHtml } = require('./menuFetcher');
+  const card='<div class="food-item-holder"><h3>Rice</h3><div class="food-price">$5</div><div class="food-item-description">Rice and beans with sauce.</div></div>';
+  const source=parseMenuHtml(`<main><div class="food-menu-grid-item-content"><h2>Bowls</h2><div class="food-menu-content">${card}${card}</div></div><p>${'Menu information. '.repeat(10)}</p></main>`,{id:'test',displayName:{text:'Test'}},'https://example.com/menu');
+  assert.equal(source.items.length,1);assert.equal(source.sourceCardCount,2);assert.equal(source.inventoryComplete,true);
+});
+
+test('successful inventory items survive a failed targeted repair and are reused on retry', async () => {
+  const items=[0,1].map(i=>({...dish(`item-${i}`),sourceItemId:`source-${i}`,extractionStatus:'pending'}));
+  const attempts=[];let repairFails=true;
+  const h=harness({fetchMenuText:async()=>({...source,items,inventoryComplete:true}),readMenu:async input=>{
+    attempts.push(input.items.map(item=>item.sourceItemId));
+    if(input.items.length===2)return {status:'partial',dishes:[{...input.items[0],extractionStatus:'readable'}]};
+    if(repairFails)throw new Error('Gemini temporary failure');
+    return {status:'readable',dishes:input.items.map(item=>({...item,extractionStatus:'readable'}))};
+  }});
+  let job=await h.call('POST','/api/menu/jobs',{venueId:VENUE,mode:'full'});
+  let result=await h.completed(job.body.jobId);
+  assert.equal(result.result.coverage.extracted,1);assert.equal(result.result.coverage.failed,1);
+  repairFails=false;
+  job=await h.call('POST','/api/menu/jobs',{venueId:VENUE,mode:'full',refresh:true});
+  result=await h.completed(job.body.jobId);
+  assert.equal(result.result.coverage.extracted,2);assert.equal(result.result.coverage.failed,0);
+  assert.deepEqual(attempts.at(-1),['source-1']);
+});
+
+
+test('partial inventory cache resumes only unfinished items after a backend restart', async () => {
+  const cacheDir=await fs.mkdtemp(path.join(os.tmpdir(),'table8-resume-test-'));
+  const items=[0,1].map(i=>({...dish(`item-${i}`),sourceItemId:`source-${i}`,extractionStatus:'pending'}));
+  try {
+    let h=harness({cacheDir,fetchMenuText:async()=>({...source,items,inventoryComplete:true}),readMenu:async input=>{
+      if(input.items.length===2)return {status:'partial',dishes:[{...input.items[0],extractionStatus:'readable'}]};
+      throw new Error('Gemini unavailable');
+    }});
+    let job=await h.call('POST','/api/menu/jobs',{venueId:VENUE,mode:'full'});
+    let result=await h.completed(job.body.jobId);assert.equal(result.result.coverage.failed,1);
+    const requests=[];
+    h=harness({cacheDir,fetchMenuText:async()=>({...source,items,inventoryComplete:true}),readMenu:async input=>{
+      requests.push(input.items.map(item=>item.sourceItemId));
+      return {status:'readable',dishes:input.items.map(item=>({...item,extractionStatus:'readable'}))};
+    }});
+    job=await h.call('POST','/api/menu/jobs',{venueId:VENUE,mode:'full'});
+    result=await h.completed(job.body.jobId);
+    assert.equal(result.result.coverage.extracted,2);assert.equal(result.result.coverage.failed,0);
+    assert.deepEqual(requests,[['source-1']]);
+  } finally {await fs.rm(cacheDir,{recursive:true,force:true});}
+});
+
+
+test('rate-limit retries respect provider cooldown instead of retrying every second', () => {
+  const { providerRetryDelay } = require('./menuReader');
+  const error={status:429,message:JSON.stringify({error:{details:[{'@type':'type.googleapis.com/google.rpc.RetryInfo',retryDelay:'55s'}]}})};
+  assert.ok(providerRetryDelay(error,0)>=55000);
+  assert.ok(providerRetryDelay({status:429},1)>=60000);
+  assert.ok(providerRetryDelay({status:503},0)<2000);
+});
+
+
+test('completed reviews survive progress and refresh but never cross allergy profiles or changed ingredients', async t => {
+  const original=global.sessionStorage;const storage=new Map();
+  global.sessionStorage={getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)};
+  t.after(()=>global.sessionStorage=original);
+  const cache=await import('../src/data/dietaryReviewCache.js?review-cache-test');
+  const option={...dish('persisted-rice'),extractionStatus:'readable'};
+  const milk={diet:'Hindu non-veg',allergies:['Milk'],allergiesAnswered:true};
+  const shellfish={...milk,allergies:['Shellfish']};
+  const review={dishId:option.id,profileStatus:'unknown',reason:'Sauce needs review',concerns:[]};
+  let notifications=0;const unsubscribe=cache.subscribeReviews(()=>notifications++);
+  cache.storeReview(option,milk,review);unsubscribe();
+  assert.equal(notifications,1);
+  assert.deepEqual(cache.assessmentsFor(cache.getReviewSnapshot(),[{...option,extractionStatus:'pending'}],milk),{});
+  assert.deepEqual(cache.assessmentsFor(cache.getReviewSnapshot(),[option],shellfish),{});
+  assert.deepEqual(cache.assessmentsFor(cache.getReviewSnapshot(),[{...option,listedIngredients:['butter']}],milk),{});
+  const reloaded=await import('../src/data/dietaryReviewCache.js?review-cache-reloaded');
+  reloaded.restoreReviews();
+  assert.equal(reloaded.assessmentsFor(reloaded.getReviewSnapshot(),[option],milk)[option.id].reason,'Sauce needs review');
+});
+
+test('a failed review item preserves successes, continues later batches, and retries only unfinished items', async () => {
+  const items=Array.from({length:9},(_,i)=>({...dish(`review-${i}`),sourceItemId:`review-${i}`,extractionStatus:'pending'}));
+  const calls=[];
+  let fail=true;
+  const h=harness({fetchMenuText:async()=>({...source,items,inventoryComplete:true}),readMenu:async input=>({status:'readable',dishes:input.items.map(item=>({...item,extractionStatus:'readable'}))}),assessMenu:async batch=>{
+    calls.push(...batch.map(item=>item.id));
+    const assessments=batch.filter(item=>!fail||item.id!=='review-1').map(item=>({dishId:item.id,profileStatus:'unknown',reason:'Unknown sourcing and cross-contact',concerns:[]}));
+    if(assessments.length!==batch.length){const error=new Error('Invalid evidence for one item');error.assessments=assessments;throw error;}
+    return assessments;
+  }});
+  const menu=await h.call('POST','/api/menu/jobs',{venueId:VENUE,mode:'full'});await h.completed(menu.body.jobId);
+  const body={menuJobId:menu.body.jobId,preferences:{diet:'Vegan',allergies:[]}};
+  const first=await h.call('POST','/api/menu/reviews',body);
+  const partial=await h.completed(first.body.jobId);
+  assert.equal(partial.status,'error');assert.equal(partial.result.assessments.length,8);
+  assert.deepEqual(partial.result.failedItems.map(item=>item.dishId),['review-1']);
+  assert.equal(new Set(calls).size,9);
+  fail=false;calls.length=0;
+  const retry=await h.call('POST','/api/menu/reviews',body);
+  const complete=await h.completed(retry.body.jobId);
+  assert.equal(complete.status,'ready');assert.equal(complete.result.assessments.length,9);
+  assert.deepEqual(calls,['review-1']);
+});
+
+test('review requests assess only requested unfinished dish IDs from the server menu', async () => {
+  const assessed=[];
+  const h=harness({fetchMenuText:async()=>source,readMenu:async()=>({status:'readable',dishes:[dish('one'),dish('two')]}),assessMenu:async dishes=>{
+    assessed.push(...dishes.map(item=>item.id));return dishes.map(item=>({dishId:item.id,profileStatus:'unknown',reason:'Unknown',concerns:[]}));
+  }});
+  const menu=await h.call('POST','/api/menu/jobs',{venueId:VENUE});await h.completed(menu.body.jobId);
+  const body={menuJobId:menu.body.jobId,preferences:{diet:'Vegan',allergies:[]},dishIds:['two']};
+  const review=await h.call('POST','/api/menu/reviews',body);await h.completed(review.body.jobId);
+  assert.deepEqual(assessed,['two']);
+  assert.equal((await h.call('POST','/api/menu/reviews',{...body,dishIds:['invented']})).status,400);
 });

@@ -158,6 +158,7 @@ legend { padding: 0 8px; font-size: 14px; }
 .consent-card small { font-size: 12px; }
 .verification-action { min-width: 260px; }
 .error { color: #b1212c !important; }
+.menu-no-conflict { color: #25623b; }
 .status-message { padding: 12px; border-radius: 8px; background: var(--sage); font-size: 13px !important; }
 .request-layout { display: grid; grid-template-columns: minmax(0, 760px) minmax(0, 1fr); gap: 32px; }
 .request-page > .approval-button { width: 340px; }

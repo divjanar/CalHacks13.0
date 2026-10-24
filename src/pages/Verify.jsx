@@ -1,35 +1,52 @@
 ﻿import { useEffect, useRef, useState } from 'react'
+import { useAuth, useClerk, useUser } from '@clerk/react'
 import Page from '../components/Page'
 import Field from '../components/Field'
 import Button from '../components/Button'
 import Notice from '../components/Notice'
 import { useApp } from '../state/context'
-import {
-  isUniversityEmail,
-  universityEmailPattern,
-} from '../data/universityEmail'
+import { isUniversityEmail } from '../data/universityEmail'
 
 const API_URL =
   import.meta.env.VITE_API_URL || 'http://localhost:3001'
 
 export default function Verify() {
-  const { state, update, pendingEmail } = useApp()
+  const { state, update } = useApp()
+  const { getToken } = useAuth()
+  const { isLoaded, isSignedIn, user } = useUser()
+  const clerk = useClerk()
 
-  const [email, setEmail] = useState(pendingEmail || '')
-  const [code, setCode] = useState('')
-  const [sent, setSent] = useState(false)
-  const [emailVerified, setEmailVerified] = useState(false)
-  const [message, setMessage] = useState('')
-
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
   const [file, setFile] = useState(null)
   const [consent, setConsent] = useState(false)
-  const [idStatus, setIdStatus] = useState('idle')
-  const [idMessage, setIdMessage] = useState('')
+  const [checking, setChecking] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const [awaitingSavedResult, setAwaitingSavedResult] =
+    useState(false)
+  const [message, setMessage] = useState('')
+  const [failed, setFailed] = useState(false)
 
   const requestRef = useRef(null)
   const requestNumber = useRef(0)
+  const fileInputRef = useRef(null)
+  const initializedFor = useRef(null)
 
-  // Cancel any pending upload when leaving this page.
+  const emailAddress = user?.primaryEmailAddress
+  const email = emailAddress?.emailAddress || ''
+
+  const emailVerified =
+    emailAddress?.verification?.status === 'verified' &&
+    isUniversityEmail(email)
+
+  // This backend value now requires both name and DOB checks.
+  const passed = state.account?.ageCheckPassed === true
+
+  const savedFirstName =
+    state.account?.profile?.firstName || ''
+  const savedLastName =
+    state.account?.profile?.lastName || ''
+
   useEffect(() => {
     return () => {
       requestNumber.current += 1
@@ -37,315 +54,492 @@ export default function Verify() {
     }
   }, [])
 
-  function resetIdCheck() {
+  // Reset document drafts when the account or email changes.
+  useEffect(() => {
     requestNumber.current += 1
     requestRef.current?.abort()
     requestRef.current = null
-    setIdStatus('idle')
-    setIdMessage('')
-    update({ verified: false })
-  }
+    initializedFor.current = null
 
-  function send(event) {
-    event.preventDefault()
+    setFirstName('')
+    setLastName('')
+    setFile(null)
+    setConsent(false)
+    setChecking(false)
+    setAwaitingSavedResult(false)
+    setMessage('')
+    setFailed(false)
 
-    if (!isUniversityEmail(email)) {
-      setMessage('Use a university email address ending in .edu.')
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }, [user?.id, email])
+
+  // Prefill an existing account name once account loading finishes.
+  useEffect(() => {
+    if (
+      !user?.id ||
+      !state.signedIn ||
+      state.authLoading ||
+      state.accountLoading
+    ) {
       return
     }
 
-    setSent(true)
-    setCode('')
-    setEmailVerified(false)
-    update({ verified: false })
-    setMessage(
-      'Demo code: 123456. No email was sent. Requesting a new code resets the previous email check.'
-    )
-  }
+    const owner = `${user.id}:${email}`
 
-  function verifyEmail() {
-    if (!sent) {
-      setMessage('Enter an email and preview sending a code first.')
-      return
+    if (initializedFor.current === owner) return
+
+    initializedFor.current = owner
+    setFirstName(savedFirstName)
+    setLastName(savedLastName)
+  }, [
+    user?.id,
+    email,
+    state.signedIn,
+    state.authLoading,
+    state.accountLoading,
+    savedFirstName,
+    savedLastName,
+  ])
+
+  useEffect(() => {
+    if (passed) {
+      setAwaitingSavedResult(false)
     }
+  }, [passed])
 
-    if (code !== '123456') {
-      setMessage('That demo code does not match. Use 123456.')
-      return
-    }
-
-    setEmailVerified(true)
-    setMessage(
-      'University email check simulated. This does not prove enrollment.'
-    )
+  function clearMessage() {
+    setMessage('')
+    setFailed(false)
   }
 
   function selectFile(event) {
-    resetIdCheck()
+    clearMessage()
+    setFile(null)
 
     const selected = event.target.files?.[0]
-    setFile(null)
 
     if (!selected) return
 
     if (!['image/jpeg', 'image/png'].includes(selected.type)) {
-      setIdMessage('Choose a JPEG or PNG image.')
+      setFailed(true)
+      setMessage('Choose a JPEG or PNG image.')
       event.target.value = ''
       return
     }
 
     if (selected.size > 5 * 1024 * 1024) {
-      setIdMessage('Your image must be 5 MB or smaller.')
+      setFailed(true)
+      setMessage('Choose an image no larger than 5 MB.')
       event.target.value = ''
       return
     }
 
     setFile(selected)
-    setIdMessage('Image selected. Ready to check the printed DOB.')
   }
 
-  async function checkId() {
-    if (!file || !consent) {
-      setIdMessage(
-        'Choose a fictional test image and agree to AI processing first.'
+  async function refreshEmail() {
+    if (!user || refreshing) return
+
+    setRefreshing(true)
+    clearMessage()
+
+    try {
+      await user.reload()
+      await getToken({ skipCache: true })
+    } catch {
+      setFailed(true)
+      setMessage('Unable to refresh your email status.')
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  async function checkDocument(event) {
+    event.preventDefault()
+
+    if (checking || passed || awaitingSavedResult) return
+
+    clearMessage()
+
+    if (!emailVerified) {
+      setFailed(true)
+      setMessage(
+        'Verify your university .edu email before continuing.'
       )
       return
     }
 
-    resetIdCheck()
+    const legalFirstName = firstName.trim()
+    const legalLastName = lastName.trim()
 
+    if (
+      !legalFirstName ||
+      !legalLastName ||
+      legalFirstName.length > 80 ||
+      legalLastName.length > 80
+    ) {
+      setFailed(true)
+      setMessage(
+        'Enter your legal first and last name, each no longer than 80 characters.'
+      )
+      return
+    }
+
+    if (!file || !consent) {
+      setFailed(true)
+      setMessage(
+        'Choose a fictional test image and agree to processing.'
+      )
+      return
+    }
+
+    requestNumber.current += 1
     const currentRequest = requestNumber.current
+
     const controller = new AbortController()
     requestRef.current = controller
 
-    setIdStatus('checking')
-    setIdMessage('Reading the printed date of birth…')
+    setChecking(true)
+    setMessage('Checking the printed name and date of birth…')
 
-    const formData = new FormData()
-    formData.append('image', file)
-
-    const timeout = setTimeout(() => controller.abort(), 90000)
+    const timeout = setTimeout(
+      () => controller.abort(),
+      90000
+    )
 
     try {
-      const response = await fetch(`${API_URL}/api/age-check`, {
-        method: 'POST',
-        body: formData,
-        signal: controller.signal,
-      })
+      const token = await getToken()
 
-      // The browser adds the multipart Content-Type automatically.
-      const result = await response.json()
+      if (!token) {
+        throw new Error('Please sign in again.')
+      }
+
+      if (controller.signal.aborted) {
+        throw new DOMException(
+          'Request aborted',
+          'AbortError'
+        )
+      }
+
+      const body = new FormData()
+      body.append('firstName', legalFirstName)
+      body.append('lastName', legalLastName)
+      body.append('image', file)
+
+      const response = await fetch(
+        `${API_URL}/api/age-check`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          body,
+          signal: controller.signal,
+        }
+      )
+
+      let result
+
+      try {
+        result = await response.json()
+      } catch {
+        throw new Error(
+          'The backend returned an unexpected response.'
+        )
+      }
 
       if (currentRequest !== requestNumber.current) return
 
       if (!response.ok) {
-        throw new Error(result.error || 'The age check failed.')
+        throw new Error(
+          result.error || 'Unable to complete the document check.'
+        )
       }
 
       if (
         result.status === 'meets_age_requirement' &&
-        result.eligible === true
+        result.eligible === true &&
+        result.nameMatch === 'matched' &&
+        result.saved === true
       ) {
-        setIdStatus('passed')
-        setIdMessage(
-          'The extracted DOB meets the 18+ requirement. Identity and document authenticity have not been verified.'
+        setAwaitingSavedResult(true)
+        setFile(null)
+
+        if (fileInputRef.current) {
+          fileInputRef.current.value = ''
+        }
+
+        setMessage(
+          'The name and DOB checks passed and were saved. ' +
+          'Waiting for your account to update…'
         )
-      } else if (
-        result.status === 'under_18' &&
-        result.eligible === false
-      ) {
-        setIdStatus('underage')
-        setIdMessage(
-          'The extracted DOB indicates an age under 18. You cannot continue with this result.'
+      } else if (result.status === 'under_18') {
+        setFailed(true)
+        setMessage(
+          'The printed DOB indicates an age under 18. ' +
+          'This result does not allow you to continue.'
+        )
+      } else if (result.status === 'name_mismatch') {
+        setFailed(true)
+        setMessage(
+          'The printed name does not match the entered legal name. ' +
+          'Check both fields against your fictional document.'
+        )
+      } else if (result.status === 'needs_review') {
+        setFailed(true)
+        setMessage(
+          'The name or DOB could not be confirmed reliably. ' +
+          'Check the entered name and try a clearer fictional image.'
         )
       } else {
-        setIdStatus('needs_review')
-        setIdMessage(
-          'The DOB could not be read reliably. Choose a clearer image showing a labeled, unambiguous date of birth.'
+        throw new Error(
+          'The backend returned an unexpected document-check result.'
         )
       }
     } catch (error) {
       if (currentRequest !== requestNumber.current) return
 
-      setIdStatus('error')
-      setIdMessage(
+      setFailed(true)
+      setMessage(
         error.name === 'AbortError'
-          ? 'The check timed out. Please try again.'
+          ? 'The document check timed out. Please try again.'
           : error instanceof TypeError
-            ? 'Cannot reach the backend. Make sure it is running on port 3001.'
-            : error.message || 'The age check failed. Please try again.'
+            ? 'Cannot reach the backend. Check that it is running on port 3001.'
+            : error.message || 'Unable to complete the check.'
       )
     } finally {
       clearTimeout(timeout)
 
       if (currentRequest === requestNumber.current) {
+        setChecking(false)
         requestRef.current = null
       }
     }
   }
 
   function continueSetup() {
-    if (!emailVerified || idStatus !== 'passed' || !consent) {
-      setMessage(
-        'Complete the demo email check and pass the DOB age check before continuing.'
-      )
-      return
-    }
+    if (!passed) return
 
-    // Prototype navigation only; this is not server-side verification.
-    update({ verified: true, signedIn: true })
+    update({
+      verified: true,
+      verificationNext: 'preferences',
+    })
 
-    window.location.hash =
-      state.verificationNext === 'preferences'
-        ? '/preferences'
-        : '/consent'
+    window.location.hash = '/settings'
   }
 
-  const checking = idStatus === 'checking'
-  const canContinue =
-    emailVerified && idStatus === 'passed' && consent
+  if (
+    !isLoaded ||
+    state.authLoading ||
+    state.accountLoading
+  ) {
+    return (
+      <div
+        className="account-spinner-screen"
+        role="status"
+        aria-label="Loading your account"
+        aria-busy="true"
+      >
+        <div className="account-spinner" aria-hidden="true" />
+      </div>
+    )
+  }
+
+  if (!isSignedIn || !state.signedIn) {
+    return (
+      <Page
+        eyebrow="ACCOUNT SETUP"
+        title="Sign in to continue."
+        intro="Your document check belongs to your Table 8 account."
+      >
+        <Button to="#/signin">Sign in</Button>
+      </Page>
+    )
+  }
+
+  const busy = checking || awaitingSavedResult
 
   return (
     <Page
-      eyebrow={
-        state.verificationNext === 'preferences'
-          ? 'CREATE ACCOUNT · EMAIL & AGE'
-          : 'STEP 2 OF 3 · EMAIL & AGE'
-      }
+      eyebrow="ACCOUNT SETUP · VERIFICATION FIRST"
       title="A thoughtful first hello."
-      intro="Preview the university email check and check the date of birth on a fictional test document."
+      intro="Check your university email, then complete the prototype name and DOB checks."
     >
       <section className="card narrow-card">
         <h2>1 · University email</h2>
+
         <p>
-          Email verification is currently simulated. No email will be sent.
+          <strong>{email || 'No primary email available'}</strong>
         </p>
 
-        <form className="compact-form" onSubmit={send}>
-          <Field label="University email (.edu) · Required">
-            <input
-              type="email"
-              required
-              pattern={universityEmailPattern}
-              title="Use a university email address ending in .edu."
-              value={email}
-              placeholder="you@university.edu"
-              onChange={event => {
-                setEmail(event.target.value)
-                setEmailVerified(false)
-                setSent(false)
-                setCode('')
-                setMessage('')
-                update({ verified: false })
-              }}
-            />
-          </Field>
+        {emailVerified ? (
+          <Notice>
+            University email verified through Clerk.
+            Inbox access does not prove current enrollment.
+          </Notice>
+        ) : (
+          <>
+            <Notice>
+              Verify a primary university email ending in .edu
+              before continuing.
+            </Notice>
 
-          <button
-            className="button secondary verification-action"
-            type="submit"
+            <button
+              className="button secondary verification-action"
+              type="button"
+              onClick={() => clerk.openUserProfile()}
+            >
+              Manage account email
+            </button>
+
+            <button
+              className="button secondary verification-action"
+              type="button"
+              disabled={refreshing}
+              onClick={refreshEmail}
+            >
+              {refreshing
+                ? 'Refreshing…'
+                : 'Refresh email status'}
+            </button>
+          </>
+        )}
+
+        <h2>2 · Legal name and document DOB</h2>
+
+        {passed ? (
+          <Notice>
+            Your prototype name match and DOB result are saved.
+            Document authenticity, ownership, and expiry have
+            not been verified.
+          </Notice>
+        ) : (
+          <form
+            onSubmit={checkDocument}
+            aria-busy={busy}
           >
-            Preview sending verification code
-          </button>
-        </form>
+            <Notice>
+              Development test: use fictional names and documents.
+              The entered name and image are sent to Google Gemini.
+              This compares printed text; it does not authenticate
+              the document or establish who uploaded it.
+            </Notice>
 
-        <Field label="Demo email verification code">
-          <input
-            inputMode="numeric"
-            maxLength={6}
-            value={code}
-            placeholder="Enter 6-digit code"
-            onChange={event =>
-              setCode(event.target.value.replace(/\D/g, ''))
-            }
-          />
-        </Field>
-
-        <button
-          className="button secondary verification-action"
-          type="button"
-          onClick={verifyEmail}
-        >
-          Check demo code
-        </button>
-
-        {message && (
-          <p className="status-message" role="status">
-            {message}
-          </p>
-        )}
-
-        <h2>2 · Document DOB check</h2>
-
-        <Notice>
-          Development test: use fictional documents only. The image is
-          sent through our backend to Google Gemini to extract the printed
-          DOB. Our backend does not save the image to disk. This check
-          does not authenticate an ID, verify its owner, or check expiry.
-        </Notice>
-
-        <Field label="Fictional test image · JPEG or PNG · Maximum 5 MB">
-          <input
-            type="file"
-            accept="image/jpeg,image/png"
-            onChange={selectFile}
-          />
-        </Field>
-
-        {file && (
-          <p className="field-value">
-            Selected: {file.name}
-          </p>
-        )}
-
-        <label className="field">
-          <span>
-            <input
-              type="checkbox"
-              checked={consent}
-              onChange={event => {
-                resetIdCheck()
-                setConsent(event.target.checked)
+            <fieldset
+              disabled={busy || !emailVerified}
+              style={{
+                border: 0,
+                padding: 0,
+                margin: 0,
+                minWidth: 0,
               }}
-            />{' '}
-            I understand this image will be sent to Google Gemini for
-            DOB extraction and confirm it contains fictional test data.
-          </span>
-        </label>
+            >
+              <Field
+                label="Legal first name"
+                hint="Enter the first name exactly as printed. Do not include a separately listed middle name."
+              >
+                <input
+                  name="firstName"
+                  autoComplete="given-name"
+                  required
+                  maxLength={80}
+                  value={firstName}
+                  onChange={event => {
+                    setFirstName(event.target.value)
+                    clearMessage()
+                  }}
+                />
+              </Field>
 
-        <button
-          className="button secondary verification-action"
-          type="button"
-          disabled={!file || !consent || checking}
-          onClick={checkId}
-        >
-          {checking ? 'Checking DOB…' : 'Check age requirement'}
-        </button>
+              <Field
+                label="Legal last name"
+                hint="Include every part of a compound surname."
+              >
+                <input
+                  name="lastName"
+                  autoComplete="family-name"
+                  required
+                  maxLength={80}
+                  value={lastName}
+                  onChange={event => {
+                    setLastName(event.target.value)
+                    clearMessage()
+                  }}
+                />
+              </Field>
 
-        {idMessage && (
-          <p className="status-message" role="status" aria-live="polite">
-            {idMessage}
+              <Field label="Fictional document · JPEG or PNG · Maximum 5 MB">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png"
+                  required
+                  onChange={selectFile}
+                />
+              </Field>
+
+              {file && (
+                <p className="field-value">
+                  Selected: {file.name}
+                </p>
+              )}
+
+              <label className="check">
+                <input
+                  type="checkbox"
+                  required
+                  checked={consent}
+                  onChange={event => {
+                    setConsent(event.target.checked)
+                    clearMessage()
+                  }}
+                />
+                <span>
+                  I agree to Gemini processing the entered name
+                  and image, and confirm they contain fictional
+                  test data.
+                </span>
+              </label>
+
+              <button
+                className="button secondary verification-action"
+                type="submit"
+                disabled={!file || !consent}
+              >
+                {checking
+                  ? 'Checking name and DOB…'
+                  : awaitingSavedResult
+                    ? 'Updating account…'
+                    : 'Check name and age'}
+              </button>
+            </fieldset>
+          </form>
+        )}
+
+        {message && !passed && (
+          <p
+            className={failed ? 'error' : 'status-message'}
+            role={failed ? 'alert' : 'status'}
+            aria-live="polite"
+          >
+            {message}
           </p>
         )}
 
         <button
           className="button"
           type="button"
-          disabled={!canContinue || checking}
+          disabled={!passed || checking}
           onClick={continueSetup}
         >
-          Continue preview →
+          Continue to account information →
         </button>
 
         <Button to="#/report" secondary>
           Get verification help
         </Button>
-
-        <small>
-          Prototype: email verification is simulated. The DOB check uses
-          Gemini. Account access must be enforced by the backend before
-          this app is used with real diners.
-        </small>
       </section>
     </Page>
   )

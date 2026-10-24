@@ -46,7 +46,8 @@
         "units": "30"
       }
     },
-    "menuUrl": null
+    "menuUrl": "https://images.getbento.com/accounts/03e46b0a490c9d081e19b5a7b69f759d/media/KcqVzvRSd6g4GweRWNA9_Makai_Main%20Food%20Menu%20April%202026.pdf",
+    "websiteUri": "https://www.makaisantacruz.com/"
   },
   {
     "id": "ChIJrSzz8JlBjoAR4EwBj-WBV4E",
@@ -70,7 +71,8 @@
         "units": "20"
       }
     },
-    "menuUrl": null
+    "menuUrl": "https://order.toasttab.com/online/pretty-good-advice-downtown",
+    "websiteUri": "https://www.prettygoodadvicerestaurant.com/"
   },
   {
     "id": "ChIJvXl2weCAhYARjSxnhzrBfNc",
@@ -183,7 +185,8 @@
       "text": "Ghirardelli Chocolate Experience",
       "languageCode": "en"
     },
-    "menuUrl": null
+    "menuUrl": "https://www.ghirardelli.com/stores/sf-experience",
+    "websiteUri": "https://www.ghirardelli.com/stores/sf-experience"
   },
   {
     "id": "ChIJ90JImRKBhYARXrwUAyZIhqw",
@@ -306,7 +309,8 @@
         "units": "20"
       }
     },
-    "menuUrl": null
+    "menuUrl": "https://arsicault-bakery.com/menus/mcallister/",
+    "websiteUri": "https://arsicault-bakery.com/"
   },
   {
     "id": "ChIJZy35-bl_j4ARBBvSPp-LhIE",
@@ -465,7 +469,8 @@
         "units": "80"
       }
     },
-    "menuUrl": null
+    "menuUrl": "https://www.piccino.com/s/Dogpatch-Dinner-Menu.pdf",
+    "websiteUri": "https://www.piccino.com/"
   },
   {
     "id": "ChIJj3EJW6KAhYARB-Dl9_ArzVM",
@@ -578,6 +583,7 @@
       "text": "Salt & Straw",
       "languageCode": "en"
     },
-    "menuUrl": null
+    "menuUrl": "https://orders.saltandstraw.com/menu/salt-straw-hayes",
+    "websiteUri": "https://saltandstraw.com/pages/hayes-valley"
   }
 ]

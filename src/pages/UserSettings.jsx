@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { useMutation } from 'convex/react'
+import { api } from '../../convex/_generated/api'
 import Page from '../components/Page'
 import Field from '../components/Field'
 import LocationInput from '../components/LocationInput'
@@ -8,36 +10,270 @@ import { resolveLocalArea } from '../services/areaSuggestions'
 import { useApp } from '../state/context'
 
 export default function UserSettings() {
-  const { state, update, pendingEmail } = useApp()
-  const [firstName, setFirstName] = useState(state.profile?.firstName || '')
-  const [lastName, setLastName] = useState(state.profile?.lastName || '')
-  const [preferredFirstName, setPreferredFirstName] = useState(state.profile?.preferredFirstName || '')
-  const [localArea, setLocalArea] = useState(state.profile?.localArea ?? state.preferences.area ?? '')
+  const { state, pendingEmail } = useApp()
+
+  if (state.authLoading || state.accountLoading) {
+    return (
+      <div
+        className="account-spinner-screen"
+        role="status"
+        aria-label="Loading your account"
+        aria-busy="true"
+      >
+        <div className="account-spinner" aria-hidden="true" />
+      </div>
+    )
+  }
+
+  if (!state.signedIn) {
+    return (
+      <Page title="Sign in to continue.">
+        <Button to="#/signin">Sign in</Button>
+      </Page>
+    )
+  }
+
+  const legalName = state.account?.legalName
+
+  if (
+    state.account?.ageCheckPassed !== true ||
+    !legalName?.firstName ||
+    !legalName.lastName
+  ) {
+    return (
+      <Page
+        eyebrow="ACCOUNT SETUP"
+        title="Verification comes first."
+        intro="Complete the prototype name and DOB checks before adding your account information."
+      >
+        <Button to="#/verify">
+          Continue to verification →
+        </Button>
+      </Page>
+    )
+  }
+
+  return (
+    <ProfileForm
+      key={JSON.stringify([
+        state.account?.profile?._id || 'new-profile',
+        legalName.firstName,
+        legalName.lastName,
+      ])}
+      profile={state.account?.profile}
+      legalName={legalName}
+      email={pendingEmail}
+      onboarding={!state.onboardingComplete}
+    />
+  )
+}
+
+function ProfileForm({
+  profile,
+  legalName,
+  email,
+  onboarding,
+}) {
+  const saveProfile = useMutation(api.accounts.saveProfile)
+
+  const [preferredFirstName, setPreferredFirstName] = useState(
+    profile?.preferredFirstName || ''
+  )
+
+  const [localArea, setLocalArea] = useState(
+    profile?.localArea || ''
+  )
+
+  const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
-  const hasAccount = state.signedIn || Boolean(state.profile && state.verificationNext === 'preferences')
+  const [failed, setFailed] = useState(false)
+
+  function clearMessage() {
+    setMessage('')
+    setFailed(false)
+  }
+
   async function save(event) {
     event.preventDefault()
-    if (!firstName.trim() || !lastName.trim()) { setMessage('Enter your first and last name.'); return }
-    let area
-    try { area = await resolveLocalArea(localArea) } catch (failure) { setMessage(failure.message); return }
-    update({ profile: { ...state.profile, firstName: firstName.trim(), lastName: lastName.trim(), preferredFirstName: preferredFirstName.trim() || firstName.trim(), localArea: area }, preferences: { ...state.preferences, area } })
-    setFirstName(firstName.trim()); setLastName(lastName.trim()); setPreferredFirstName(preferredFirstName.trim() || firstName.trim())
-    setLocalArea(area)
-    setMessage('Your settings have been saved in this demo session.')
+    if (saving) return
+
+    clearMessage()
+
+    if (!localArea.trim()) {
+      setFailed(true)
+      setMessage('Enter your local area.')
+      return
+    }
+
+    setSaving(true)
+
+    try {
+      const area = await resolveLocalArea(localArea)
+
+      const preferred =
+        preferredFirstName.trim() || legalName.firstName
+
+      await saveProfile({
+        firstName: legalName.firstName,
+        lastName: legalName.lastName,
+        preferredFirstName: preferred,
+        localArea: area,
+      })
+
+      if (onboarding) {
+        window.location.hash = '/preferences'
+        return
+      }
+
+      setLocalArea(area)
+      setPreferredFirstName(preferred)
+      setMessage('Your account details have been saved.')
+    } catch (error) {
+      setFailed(true)
+      setMessage(
+        typeof error?.data === 'string'
+          ? error.data
+          : error.message || 'Unable to save your profile.'
+      )
+    } finally {
+      setSaving(false)
+    }
   }
-  if (!hasAccount) return <Page eyebrow="YOUR ACCOUNT" title="User settings" intro="Sign in to view your account settings."><Button to="#/signin">Sign in</Button></Page>
-  return <Page eyebrow="YOUR ACCOUNT" title="User settings" intro="Manage your account details and the name people see at Table 8.">
-    <form className="card narrow-card settings-form" onSubmit={save}>
-      <h2>Personal information</h2>
-      <Field label="First name"><input name="firstName" autoComplete="given-name" required maxLength={80} value={firstName} onChange={event => { setFirstName(event.target.value); setMessage('') }} /></Field>
-      <Field label="Last name"><input name="lastName" autoComplete="family-name" required maxLength={80} value={lastName} onChange={event => { setLastName(event.target.value); setMessage('') }} /></Field>
-      <Field label="Preferred first name (optional)" hint="Shown beside your user icon. Leave blank to use your first name."><input name="preferredFirstName" autoComplete="nickname" maxLength={80} value={preferredFirstName} onChange={event => { setPreferredFirstName(event.target.value); setMessage('') }} /></Field>
-      <LocationInput label="Local area" required value={localArea} onChange={value => { setLocalArea(value); setMessage('') }} />
-      <Field label="University email" hint="Your sign-in email. Email changes are not connected in this demo."><input type="email" value={pendingEmail} readOnly placeholder="Not available in this demo session" /></Field>
-      <Notice>These account details are saved in this tab's demo session. A backend profile service is not connected. Passwords and identity documents are never displayed here.</Notice>
-      <button className="button" type="submit">Save changes</button>
-      {message && <p role="status">{message}</p>}
-      <Button to="#/discover" secondary>Back to dinners</Button>
-    </form>
-  </Page>
+
+  return (
+    <Page
+      eyebrow={
+        onboarding
+          ? 'ACCOUNT SETUP · PERSONAL INFORMATION'
+          : 'YOUR ACCOUNT'
+      }
+      title={
+        onboarding
+          ? 'Let’s get to know you.'
+          : 'User settings'
+      }
+      intro={
+        onboarding
+          ? 'Your legal name comes from your completed document check. Add your preferred name and local area.'
+          : 'Manage your preferred name and local area.'
+      }
+    >
+      <form
+        className="card narrow-card settings-form"
+        onSubmit={save}
+        aria-busy={saving}
+      >
+        <h2>Personal information</h2>
+
+        <fieldset
+          disabled={saving}
+          style={{
+            border: 0,
+            padding: 0,
+            margin: 0,
+            minWidth: 0,
+          }}
+        >
+          <Field
+            label="Legal first name"
+            hint="Saved from your completed prototype name check."
+          >
+            <input
+              name="firstName"
+              autoComplete="given-name"
+              value={legalName.firstName}
+              readOnly
+            />
+          </Field>
+
+          <Field
+            label="Legal last name"
+            hint="Legal-name changes require another review."
+          >
+            <input
+              name="lastName"
+              autoComplete="family-name"
+              value={legalName.lastName}
+              readOnly
+            />
+          </Field>
+
+          <Field
+            label="Preferred first name (optional)"
+            hint="Shown beside your account icon. Leave blank to use your legal first name."
+          >
+            <input
+              name="preferredFirstName"
+              autoComplete="nickname"
+              maxLength={80}
+              value={preferredFirstName}
+              onChange={event => {
+                setPreferredFirstName(event.target.value)
+                clearMessage()
+              }}
+            />
+          </Field>
+
+          <LocationInput
+            label="Local area"
+            required
+            value={localArea}
+            onChange={value => {
+              setLocalArea(value)
+              clearMessage()
+            }}
+          />
+
+          <Field
+            label="University email"
+            hint="Your sign-in email is managed by Clerk."
+          >
+            <input
+              type="email"
+              value={email || ''}
+              readOnly
+            />
+          </Field>
+        </fieldset>
+
+        <Notice>
+          Your legal name is tied to the saved prototype document
+          check. Your preferred name can be different.
+          The check compares printed text; it does not establish
+          document authenticity or ownership.
+        </Notice>
+
+        {message && (
+          <p
+            className={failed ? 'error' : 'status-message'}
+            role={failed ? 'alert' : 'status'}
+          >
+            {message}
+          </p>
+        )}
+
+        <button
+          className="button"
+          type="submit"
+          disabled={saving}
+        >
+          {saving
+            ? 'Saving…'
+            : onboarding
+              ? 'Save and continue to dining preferences →'
+              : 'Save changes'}
+        </button>
+
+        {!onboarding && (
+          <Button to="#/discover" secondary>
+            Back to dinners
+          </Button>
+        )}
+
+        <Button to="#/report" secondary>
+          Get account help
+        </Button>
+      </form>
+    </Page>
+  )
 }

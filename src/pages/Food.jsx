@@ -9,12 +9,17 @@ import { selectedDinner } from '../data/dinners'
 import { useRestaurantMenu } from '../data/useRestaurantMenu'
 
 function category(dish) {
-  if (dish.matching.recommended) return 0
+  const matching = dish.matching || {}
 
   if (
-    dish.matching.assessed &&
-    !dish.matching.hasConflict
+    matching.assessed &&
+    matching.recommended &&
+    !matching.hasConflict
   ) {
+    return 0
+  }
+
+  if (matching.assessed && !matching.hasConflict) {
     return 1
   }
 
@@ -22,11 +27,16 @@ function category(dish) {
 }
 
 function rank(dishes) {
-  return deduplicateDishes(dishes).sort((a, b) =>
+  return [...deduplicateDishes(dishes)].sort((a, b) =>
     category(a) - category(b) ||
-    b.matching.suitabilityScore -
-      a.matching.suitabilityScore,
+    Number(b.matching?.suitabilityScore || 0) -
+      Number(a.matching?.suitabilityScore || 0)
   )
+}
+
+function evidenceList(value) {
+  return (Array.isArray(value) ? value : [value])
+    .filter(item => typeof item === 'string' && item.trim())
 }
 
 export default function Food() {
@@ -34,58 +44,114 @@ export default function Food() {
   const dinner = selectedDinner(state)
   const preferences = state.preferences || {}
 
-  const profileKey = JSON.stringify([
-    dinner.venueId,
-    preferences,
-  ])
+  const [view, setView] = useState('full')
 
-  const [topProfile, setTopProfile] = useState(null)
-  const showTop = topProfile === profileKey
-  const full = useRestaurantMenu(dinner, preferences, 'full')
-  const allDishes = deduplicateDishes(full.menu?.dishes || [])
+  // Both views use the full extraction.
+  // Only the Top options display is limited to eight.
+  const full = useRestaurantMenu(
+    dinner,
+    preferences,
+    'full'
+  )
+
+  const allDishes = deduplicateDishes(
+    full.menu?.dishes || []
+  )
+
   const topDishes = rank(allDishes)
-    .filter(dish => dish.matching.assessed && dish.matching.recommended && !dish.matching.hasConflict)
+    .filter(dish =>
+      dish.matching?.assessed &&
+      dish.matching?.recommended &&
+      !dish.matching?.hasConflict
+    )
+    .slice(0, 8)
+
+  const showTop = view === 'top'
   const visible = showTop ? topDishes : allDishes
-  const error = full.error
+
+  const sourceUrl = full.menu?.sourceUrl || dinner.menuUrl
 
   return (
     <Page
       className="food-page"
       title="A menu that works for you."
-      intro={`${dinner.restaurant} | Matched to your dining needs.`}
+      intro={`${dinner.restaurant} · Reviewed against your saved dining needs.`}
     >
       <Notice>
         Your saved needs:{' '}
         {preferences.diet || 'No diet selected'}
-        {' | '}
+        {' · '}
         Allergies:{' '}
-        {(preferences.allergies || []).map(allergenLabel).join(', ') ||
-          'None selected'}
+        {(preferences.allergies || [])
+          .map(allergenLabel)
+          .join(', ') ||
+          (
+            preferences.allergiesAnswered
+              ? 'None listed'
+              : 'Not answered'
+          )}
 
         {preferences.religiousDetails &&
-          ` | ${preferences.religiousDetails}`}
+          ` · ${preferences.religiousDetails}`}
 
         {preferences.notes &&
-          ` | ${preferences.notes}`}
+          ` · ${preferences.notes}`}
       </Notice>
 
       <Button to="#/user-preferences" secondary>
         Edit my dining needs
       </Button>
 
-      {!full.menu && full.loading && (
-        <p role="status">
-          Reading the official restaurant menu...
+      {sourceUrl && (
+        <p>
+          <a
+            href={sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            View official menu ↗
+          </a>
         </p>
       )}
 
-      {error && (
+      <div
+        className="menu-view-actions"
+        role="group"
+        aria-label="Menu view"
+      >
+        <button
+          type="button"
+          className={`button${showTop ? ' secondary' : ''}`}
+          aria-pressed={!showTop}
+          onClick={() => setView('full')}
+        >
+          Full menu
+        </button>
+
+        <button
+          type="button"
+          className={`button${showTop ? '' : ' secondary'}`}
+          aria-pressed={showTop}
+          onClick={() => setView('top')}
+        >
+          Top options
+        </button>
+      </div>
+
+      {!full.menu && full.loading && (
+        <p role="status">
+          Gemini is reading the restaurant’s full menu…
+        </p>
+      )}
+
+      {full.error && (
         <Notice>
-          <span role="alert">{error}</span>
+          <span role="alert">{full.error}</span>
           {' '}
           <button
             type="button"
             className="button secondary"
+            disabled={full.loading}
             onClick={full.retry}
           >
             Try again
@@ -93,101 +159,229 @@ export default function Food() {
         </Notice>
       )}
 
-      {full.menu?.sourceUrl && <p><a href={full.menu.sourceUrl} target="_blank" rel="noopener noreferrer">View official menu</a></p>}
-      <div className="menu-view-actions" role="group" aria-label="Menu view">
-        <button type="button" className={`button${showTop ? ' secondary' : ''}`} aria-pressed={!showTop} onClick={() => setTopProfile(null)}>Full menu</button>
-        <button type="button" className={`button${showTop ? '' : ' secondary'}`} aria-pressed={showTop} onClick={() => setTopProfile(profileKey)}>Top options</button>
-      </div>
       {full.menu && (
         <>
-          {full.reviewing && <p role="status">Checking these dishes against your saved diet and allergies...</p>}
-          {full.reviewError && <Notice><span role="alert">{full.reviewError}</span><button type="button" className="button secondary" onClick={full.retryReview}>Retry dietary review</button></Notice>}
-          <h2>{showTop ? `Top options (${topDishes.length})` : `Full menu (${allDishes.length})`}</h2>
-          {showTop && topDishes.length === 0 && <p className="muted">{full.reviewing || full.loading
-            ? 'Options will appear as Gemini finishes checking your saved needs.'
-            : 'No assessed dishes currently have no identified conflicts with your saved needs.'}</p>}
-          {full.loading && <p role="status">Loading the remaining menu sections. Extracted dishes appear below.</p>}
+          <h2>
+            {showTop
+              ? `Top options (${topDishes.length})`
+              : `Full menu · ${allDishes.length} dishes read`}
+          </h2>
+
+          {showTop ? (
+            <p className="muted">
+              Up to eight assessed options with no identified
+              conflicts appear here. Restaurant confirmation
+              is still required.
+            </p>
+          ) : (
+            <p className="muted">
+              Showing every extracted dish, including conflicts
+              and dishes that still need confirmation.
+            </p>
+          )}
+
+          {showTop && topDishes.length === 0 && (
+            <p role="status">
+              {full.reviewing || full.loading
+                ? 'Options will appear as Gemini completes the dietary checks.'
+                : 'No assessed options currently meet the Top options criteria. Review the full menu for conflicts and uncertainties.'}
+            </p>
+          )}
+
+          {full.loading && (
+            <p role="status">
+              Reading the menu. Available dishes remain visible.
+            </p>
+          )}
+
+          {full.reviewing && (
+            <p role="status">
+              Checking dishes against your saved dining needs…
+            </p>
+          )}
+
           <div className="menu-grid">
             {visible.map(dish => {
-              const matching = dish.matching
+              const matching = dish.matching || {}
 
-              const aiDietReasons = matching.dietConflicts
-                .filter(item => item.group === preferences.diet)
-                .flatMap(item => Array.isArray(item.evidence) ? item.evidence : [item.evidence])
-              const localDietReasons = matching.dietConflicts
-                .filter(item => item.group !== preferences.diet && !aiDietReasons.some(reason => reason.toLowerCase().includes(item.group.toLowerCase())))
-                .flatMap(item => Array.isArray(item.evidence) ? item.evidence : [item.evidence])
-              const dietReasons = [...new Set([...aiDietReasons, ...localDietReasons])]
+              const dietConflicts =
+                matching.dietConflicts || []
+
+              const aiDietReasons = dietConflicts
+                .filter(item =>
+                  item.group === preferences.diet
+                )
+                .flatMap(item =>
+                  evidenceList(item.evidence)
+                )
+
+              const localDietReasons = dietConflicts
+                .filter(item =>
+                  item.group !== preferences.diet &&
+                  !aiDietReasons.some(reason =>
+                    reason
+                      .toLowerCase()
+                      .includes(
+                        String(item.group || '').toLowerCase()
+                      )
+                  )
+                )
+                .flatMap(item =>
+                  evidenceList(item.evidence)
+                )
+
+              const dietReasons = [...new Set([
+                ...aiDietReasons,
+                ...localDietReasons,
+              ])]
+
               const conflicts = [
-                ...matching.allergyConflicts,
-                ...(dietReasons.length ? [{ group: preferences.diet || 'Dietary restriction', evidence: dietReasons }] : []),
+                ...(matching.allergyConflicts || []),
+                ...(dietReasons.length
+                  ? [{
+                      group:
+                        preferences.diet ||
+                        'Dietary restriction',
+                      evidence: dietReasons,
+                    }]
+                  : []),
               ]
+
+              const ingredients =
+                dish.listedIngredients || []
+
+              const label = matching.hasConflict
+                ? matching.assessed
+                  ? 'Conflict identified'
+                  : 'Warning identified'
+                : !matching.assessed
+                  ? 'Dietary review incomplete'
+                  : matching.recommended
+                    ? 'No conflict identified'
+                    : 'Needs confirmation'
 
               return (
                 <article
                   className="card menu-option"
                   key={dish.id}
                 >
+                  {dish.section && (
+                    <p className="eyebrow">
+                      {dish.section}
+                    </p>
+                  )}
+
                   <h2>
                     {dish.name}
-                    {dish.price && ` | ${dish.price}`}
+                    {dish.price && ` · ${dish.price}`}
                   </h2>
-                  <p><strong>Ingredients: </strong>{dish.listedIngredients?.join(', ') || 'Not listed on the menu.'}</p>
+
+                  {dish.description && (
+                    <p>{dish.description}</p>
+                  )}
+
+                  <p>
+                    <strong>Listed ingredients: </strong>
+
+                    {ingredients.join(', ') ||
+                      (
+                        dish.extractionStatus === 'pending'
+                          ? 'Reading ingredients…'
+                          : dish.extractionStatus === 'needs_review'
+                            ? 'Not confirmed; extraction is incomplete.'
+                            : 'Not listed on the menu.'
+                      )}
+                  </p>
 
                   <p
                     className={
                       matching.hasConflict
                         ? 'error'
-                        : ''
+                        : matching.recommended
+                          ? 'menu-no-conflict'
+                          : ''
                     }
                   >
-                    <strong>
-                      {!matching.assessed
-                        ? matching.hasConflict ? 'Warning identified; Gemini review pending' : 'Gemini review pending'
-                        : matching.hasConflict
-                          ? 'Conflict identified'
-                          : matching.recommended
-                            ? 'No conflict identified'
-                            : 'Needs confirmation'}
-                    </strong>
+                    <strong>{label}</strong>
                   </p>
 
+                  {matching.assessed && (
+                    <p className="muted">
+                      Gemini reviewed the available menu
+                      evidence. Complete ingredients, sourcing,
+                      and cross-contact remain unknown.
+                    </p>
+                  )}
+
                   {conflicts.map((item, index) => (
-                    <p className="error" key={index}>
+                    <p
+                      className="error"
+                      key={`${item.allergen || item.group}-${index}`}
+                    >
                       <strong>
-                        {allergenLabel(item.allergen || item.group)}:
+                        {allergenLabel(
+                          item.allergen || item.group
+                        )}:
                       </strong>
                       {' '}
-                      {Array.isArray(item.evidence)
-                        ? item.evidence.join('; ')
-                        : item.evidence}
+                      {evidenceList(item.evidence).join('; ')}
                     </p>
                   ))}
 
-                  {!matching.recommended &&
-                    conflicts.length === 0 && (
-                      <p>
-                        {matching.recommendationReason}
-                      </p>
-                    )}
-
-
+                  {!matching.hasConflict && (
+                    <p>
+                      {matching.recommendationReason ||
+                        'Confirm ingredients, preparation, sourcing, and cross-contact with the restaurant before choosing.'}
+                    </p>
+                  )}
                 </article>
               )
             })}
           </div>
 
-          {!showTop && <p className="muted">The full menu includes conflicts and uncertain dishes.</p>}
-          {full.menu.validationNeedsReview && <p className="muted">Some source information is incomplete; results cover the dishes read.</p>}
+          {full.reviewError && (
+            <Notice>
+              Some dietary checks could not finish.
+              {' '}
+              <button
+                type="button"
+                className="button secondary"
+                disabled={full.reviewing}
+                onClick={full.retryReview}
+              >
+                Continue dietary checks
+              </button>
+            </Notice>
+          )}
+
+          {full.menu.coverageVerified !== true && (
+            <Notice>
+              Full-menu coverage has not been independently
+              verified. This page shows all dishes returned
+              by the reader; additional source items may
+              still be missing.
+            </Notice>
+          )}
 
           <Notice>
-            AI checks can miss ingredients. Confirm
-            ingredients, preparation, sourcing and cross-contact
-            with the restaurant. These options are not allergy-safe guarantees
-            or religious certifications.
+            AI checks can miss ingredients. Confirm ingredients,
+            preparation, sourcing, and cross-contact with the
+            restaurant. These results are not allergy-safety
+            guarantees or religious certifications.
           </Notice>
         </>
       )}
+
+      <button
+        className="button secondary"
+        type="button"
+        disabled={full.loading}
+        onClick={full.retry}
+      >
+        {full.loading
+          ? 'Reading full menu…'
+          : 'Read full menu again'}
+      </button>
 
       <Button to="#/dinner" secondary>
         Back to reservation options

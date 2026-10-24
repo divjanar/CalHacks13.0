@@ -108,13 +108,24 @@ Santa Cruz Diner is configured as `ChIJayGBoiRAjoARzA3Sc9KqN3g` with
 upload or diner-entered URL is used. Add verified official URLs to venue data
 to enable those restaurants. The fetcher accepts only configured HTTPS URLs,
 rejects credentials/ports and cross-host redirects, limits HTML to 2 MB, and
-extracts at most 60,000 characters of readable text.
+extracts all readable text within that download limit.
 
 `server/menu.js` exposes:
 
 - `POST /api/menu/jobs` with `{ venueId, mode: "preview" | "full" }` returns a job ID immediately.
 - `GET /api/menu/jobs/:jobId` returns progress, extracted dishes, and useful errors.
 - `POST /api/menu/reviews` with `{ menuJobId, preferences }` starts a separate background dietary review of server-extracted dishes.
+
+For SpotApps menus such as Santa Cruz Diner, the fetcher inventories every
+`.food-item-holder` card, including section context, names, prices and descriptions.
+Exact repeated cards are collapsed; genuinely distinct options keep their own source
+IDs. Gemini then enriches every inventory item in batches of eight, with two batches
+running at once. Omitted items get one targeted retry. Invalid optional fields are
+cleared without deleting real dishes. A provider failure leaves the item visible
+with unknown ingredients and compatibility, and **Retry remaining items** reuses
+successful item results. The page reports listed, read, pending, and failed counts.
+Coverage is complete only when every inventory item was processed; this describes
+the configured page, not unlisted specials, other websites, or offline offerings.
 
 The app requests the full menu by default, starting when dinner details open.
 The food page shows extracted dishes as sections finish. Adjacent **Full menu**
@@ -124,17 +135,28 @@ backend preview mode remains available but is not requested by these screens.
 There is no promise that eight suitable dishes exist. Cached extracted dishes render immediately. On a first
 visit, menu extraction has an honest loading message. Dietary review shows its
 own pending state and can be retried independently.
+Every inventoried dish is eligible for Gemini dietary review using its official
+menu evidence, including dishes whose ingredient extraction is incomplete. Such
+items cannot become potential fits until extraction completes. The page reports
+the reviewed count and distinguishes Gemini review from unknown complete
+ingredients, sourcing and cross-contact. Invalid item responses retain successful
+assessments and allow later batches to continue; provider-wide quota/outage errors
+pause work with a visible retry. Per-item in-flight reviews are shared and retries
+reuse successful assessments for the same evidence and account needs.
 
 Extraction caches and in-flight requests are shared independently of account
-preferences. Validated extraction results are cached for 24 hours in ignored
-`server/.menu-cache-v2` and in browser storage (`table8-extracted-menu-v6`).
+preferences. Source-backed extraction results are cached for 24 hours in ignored
+`server/.menu-cache-v2` and in browser storage (`table8-extracted-menu-v7`).
 Menu cache keys include the configured URL and server model setting. Account
-reviews stay in memory, keyed by dishes and the saved profile; dietary data is
-not written to disk or browser menu storage. A backend restart invalidates active
+reviews are kept separately in memory and tab session storage, keyed by the exact
+menu evidence, saved diet, allergies and notes. Completed reviews survive menu
+progress and refresh, but are never reused for different allergies or changed
+ingredients. Dietary data is not written to disk or the shared browser menu cache.
+Only unfinished dish IDs are requested on subsequent review jobs. A backend restart invalidates active
 jobs but reloads saved extractions. Retry reconnects/restarts work. Temporary
 provider errors retry at most three times per call with backoff. A missing or
 invalid dietary assessment gets at most one targeted repair attempt. Failed
-sections are marked partial, never replaced with demo dishes.
+items remain visible and unconfirmed, never replaced with demo dishes. Successful item results persist even in a partial cache, so a backend restart resumes only unfinished items.
 
 `server/menuReader.js` validates structured Gemini output against retrieved menu
 text, preserves dish excerpts and supporting allergen evidence, and rejects
@@ -155,4 +177,4 @@ setting remain separate. Never put Gemini keys in Vite variables.
 Checks: `node --test server/menu.test.cjs`, `npm.cmd run test:smoke`,
 `npm.cmd run build`. `node scripts/menu-live-check.cjs` is an optional paid,
 networked preview and four-dish review check using the configured backend key;
-it never requests full-menu extraction.
+by default. Add `--full` to validate and cache a live complete inventory extraction; this makes multiple paid Gemini requests. Add `--inventory` to inspect the source inventory without Gemini.

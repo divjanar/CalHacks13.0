@@ -6,9 +6,11 @@
   --white: #fffdfa;
   --sage: #e9eddf;
   --border: #dddcd0;
+  --background: #f6f3eb;
+
   font-family: 'Inter', sans-serif;
-  color: #28392c;
-  background: #f6f3eb;
+  color: var(--olive);
+  background: var(--background);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -18,13 +20,18 @@
   box-sizing: border-box;
 }
 
-h1, h2 { font-family: 'Playfair Display', serif; }
-html { scroll-behavior: smooth; }
-@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+html {
+  scroll-behavior: smooth;
+}
 
 body {
   margin: 0;
   min-width: 0;
+}
+
+h1,
+h2 {
+  font-family: 'Playfair Display', serif;
 }
 
 a {
@@ -42,4 +49,57 @@ a:focus-visible,
 button:focus-visible {
   outline: 3px solid #a9323b;
   outline-offset: 5px;
+}
+
+/* Covers the app while keeping authentication components mounted. */
+.account-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+
+  display: grid;
+  place-items: center;
+
+  background: var(--background);
+  color: var(--olive);
+}
+
+/* Retained for any pages using the standalone loader. */
+.account-spinner-screen {
+  min-height: 100vh;
+  min-height: 100dvh;
+
+  display: grid;
+  place-items: center;
+
+  background: var(--background);
+  color: var(--olive);
+}
+
+/* Rotating olive circle with a soft sage track. */
+.account-spinner {
+  width: 48px;
+  height: 48px;
+
+  border: 3px solid var(--sage);
+  border-top-color: var(--olive);
+  border-radius: 50%;
+
+  animation: account-spin 0.85s linear infinite;
+}
+
+@keyframes account-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .account-spinner {
+    animation: none;
+  }
 }

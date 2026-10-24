@@ -1,19 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
+import { restoreReviews, storeReview, assessmentsFor, getReviewSnapshot, getServerReviewSnapshot, subscribeReviews } from './dietaryReviewCache'
 import { cachedMenu, extractionKey, extractionTask, request, followJob } from './menuClient'
 import { mergeDishAssessment } from './dietaryMatching'
 
 const reviewTasks = new Map()
-const assessmentCache = new Map()
-const TTL = 24 * 60 * 60 * 1000
-function assessmentKey(dish, preferences) { return JSON.stringify([dish, preferences]) }
-function savedAssessments(dishes, preferences) {
-  return Object.fromEntries(dishes.flatMap(dish => {
-    const saved = assessmentCache.get(assessmentKey(dish, preferences))
-    return saved && Date.now() - saved.at < TTL ? [[dish.id, saved.value]] : []
-  }))
-}
 function useDietaryReview(menu, jobId, preferences, enabled) {
   const [attempt, setAttempt] = useState(0)
+  const cachedReviews = useSyncExternalStore(subscribeReviews, getReviewSnapshot, getServerReviewSnapshot)
+  useEffect(() => { restoreReviews() }, [])
   const payload = JSON.stringify({ menuJobId: jobId, preferences })
   const signature = JSON.stringify([payload, menu?.dishes || []])
   const [state, setState] = useState({ key: '', byId: {}, loading: false, error: '' })
@@ -26,16 +20,19 @@ function useDietaryReview(menu, jobId, preferences, enabled) {
     const notify = () => { if (active) setState({ ...task.state, key }) }
     async function load() {
       if (!task || task.state.error) {
-        task = { state: { byId: savedAssessments(dishes, preferences), loading: true, error: '' }, listeners: new Set() }
+        task = { state: { byId: assessmentsFor(getReviewSnapshot(), dishes, preferences), loading: true, error: '' }, listeners: new Set() }
         reviewTasks.set(key, task)
         task.promise = (async () => {
           try {
-            await followJob(await request('/api/menu/reviews', JSON.parse(payload)), job => {
+            const missing = dishes.filter(dish => !task.state.byId[dish.id])
+            if (!missing.length) { task.state = { ...task.state, loading: false }; return }
+            await followJob(await request('/api/menu/reviews', { ...JSON.parse(payload), dishIds: missing.map(dish => dish.id) }), job => {
               for (const item of job.result?.assessments || []) {
                 const dish = dishes.find(dish => dish.id === item.dishId)
-                if (!dish || !['potential', 'conflict', 'unknown'].includes(item.profileStatus) || !Array.isArray(item.concerns)) throw new Error('Invalid dietary assessment response.')
+                if (!dish) continue
+                if (!['potential', 'conflict', 'unknown'].includes(item.profileStatus) || !Array.isArray(item.concerns)) throw new Error('Invalid dietary assessment response.')
                 task.state.byId[item.dishId] = item
-                assessmentCache.set(assessmentKey(dish, preferences), { at: Date.now(), value: item })
+                storeReview(dish, preferences, item)
               }
               task.state = { ...task.state, byId: { ...task.state.byId }, loading: job.status === 'running', error: job.error || '' }
               for (const listener of task.listeners) listener()
@@ -54,8 +51,11 @@ function useDietaryReview(menu, jobId, preferences, enabled) {
   // The serialized signature includes the entire menu and saved profile.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature, enabled, attempt])
+  const cachedById = assessmentsFor(cachedReviews, menu?.dishes || [], preferences)
   const current = state.key === signature ? state : { byId: {}, loading: Boolean(enabled && menu?.dishes?.length), error: '' }
-  return { ...current, retry: () => setAttempt(value => value + 1) }
+  const byId = { ...current.byId, ...cachedById }
+  const missing = (menu?.dishes || []).some(dish => !byId[dish.id])
+  return { ...current, byId, loading: missing && current.loading, retry: () => setAttempt(value => value + 1) }
 }
 export function useRestaurantMenu(dinner, preferences = {}, requestedMode = 'preview', enabled = true) {
   const mode = requestedMode === 'top' ? 'preview' : requestedMode
@@ -77,7 +77,8 @@ export function useRestaurantMenu(dinner, preferences = {}, requestedMode = 'pre
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, enabled, attempt])
   const current = state.key === key ? state : { menu: null, jobId: null, status: 'running', error: '', progress: null }
-  const review = useDietaryReview(current.menu, current.jobId, preferences, enabled && Boolean(current.reviewReady))
+  const reviewMenu = current.menu
+  const review = useDietaryReview(reviewMenu, current.jobId, preferences, enabled && Boolean(current.reviewReady))
   const menu = current.menu ? { ...current.menu, dishes: current.menu.dishes.map(dish => mergeDishAssessment(dish, preferences, review.byId[dish.id])) } : null
   return {
     menu, loading: enabled && current.status === 'running', error: enabled ? current.error : '', progress: current.progress,

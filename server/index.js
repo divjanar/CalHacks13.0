@@ -1,22 +1,28 @@
-require("dotenv").config({ path: require("node:path").join(__dirname, ".env") });
+require("dotenv").config({
+  path: require("node:path").join(__dirname, ".env"),
+});
 
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
+const { ConvexHttpClient } = require("convex/browser");
+const { makeFunctionReference } = require("convex/server");
 
-const { readDateOfBirth } = require("./idReader");
+const { readIdentity } = require("./idReader");
 const { checkAge } = require("./ageCheck");
 const { registerMenu } = require("./menu");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors({
-  origin: [
-    "http://localhost:5173",
-    "http://localhost:5174",
-  ],
-}));
+app.use(
+  cors({
+    origin: [
+      "http://localhost:5173",
+      "http://localhost:5174",
+    ],
+  })
+);
 
 app.use(express.json({ limit: "256kb" }));
 
@@ -25,19 +31,27 @@ app.use("/api", (req, res, next) => {
   next();
 });
 
+// Accept one image and two legal-name fields.
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 5 * 1024 * 1024,
     files: 1,
-    fields: 0,
+    fields: 2,
+    fieldSize: 1024,
+    parts: 3,
   },
 });
 
 function detectImageType(buffer) {
-  const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const pngSignature = Buffer.from([
+    137, 80, 78, 71, 13, 10, 26, 10,
+  ]);
 
-  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(png)) {
+  if (
+    buffer.length >= 8 &&
+    buffer.subarray(0, 8).equals(pngSignature)
+  ) {
     return "image/png";
   }
 
@@ -60,6 +74,19 @@ function clearUpload(req) {
   }
 }
 
+function cleanName(value) {
+  if (typeof value !== "string") return null;
+
+  const cleaned = value
+    .normalize("NFC")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  if (!cleaned || cleaned.length > 80) return null;
+
+  return cleaned;
+}
+
 function getToday() {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Los_Angeles",
@@ -78,6 +105,53 @@ function getToday() {
   };
 }
 
+// Authenticate before accepting an uploaded document.
+async function authenticateAgeCheck(req, res, next) {
+  const authorization = req.headers.authorization || "";
+
+  if (!authorization.startsWith("Bearer ")) {
+    return res.status(401).json({
+      error: "Please sign in before checking your document.",
+    });
+  }
+
+  if (
+    !process.env.CONVEX_URL ||
+    !process.env.CONVEX_SITE_URL ||
+    !process.env.AGE_CHECK_CALLBACK_SECRET
+  ) {
+    return res.status(503).json({
+      error: "The document-check service is not configured.",
+    });
+  }
+
+  try {
+    // Never share authenticated clients between users.
+    const client = new ConvexHttpClient(
+      process.env.CONVEX_URL
+    );
+
+    client.setAuth(authorization.slice(7).trim());
+
+    req.ageCheckIdentity = await client.query(
+      makeFunctionReference("verification:getContext"),
+      {}
+    );
+
+    return next();
+  } catch (error) {
+    console.error(
+      "Document authentication failed. Code:",
+      error.status || "unknown"
+    );
+
+    return res.status(401).json({
+      error:
+        "Please sign in with a verified university .edu email and try again.",
+    });
+  }
+}
+
 app.get("/api/health", (req, res) => {
   res.json({
     success: true,
@@ -85,44 +159,173 @@ app.get("/api/health", (req, res) => {
   });
 });
 
-app.post("/api/age-check", upload.single("image"), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({
-      error: "Upload an image using the field name image.",
-    });
-  }
+// Keep the existing URL, but require name and DOB checks.
+app.post(
+  "/api/age-check",
+  authenticateAgeCheck,
+  upload.single("image"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          error: "Upload an image using the field name image.",
+        });
+      }
 
-  try {
-    const mimeType = detectImageType(req.file.buffer);
+      const allowedFields = new Set([
+        "firstName",
+        "lastName",
+      ]);
 
-    if (!mimeType) {
-      return res.status(415).json({
-        error: "Please upload a JPEG or PNG image.",
-      });
-    }
+      if (
+        Object.keys(req.body || {}).some(
+          field => !allowedFields.has(field)
+        )
+      ) {
+        return res.status(400).json({
+          error:
+            "Send only firstName, lastName, and one image.",
+        });
+      }
 
-    const extraction = await readDateOfBirth(req.file.buffer, mimeType);
+      const firstName = cleanName(req.body?.firstName);
+      const lastName = cleanName(req.body?.lastName);
 
-    if (extraction.status !== "readable") {
+      if (!firstName || !lastName) {
+        return res.status(400).json({
+          error:
+            "Enter your legal first and last name, each no longer than 80 characters.",
+        });
+      }
+
+      const mimeType = detectImageType(req.file.buffer);
+
+      if (!mimeType) {
+        return res.status(415).json({
+          error: "Please upload a JPEG or PNG image.",
+        });
+      }
+
+      const extraction = await readIdentity(
+        req.file.buffer,
+        mimeType,
+        { firstName, lastName }
+      );
+
+      const ageResult =
+        extraction.dobStatus === "readable"
+          ? checkAge(extraction.dob, getToday())
+          : {
+              status: "needs_review",
+              eligible: null,
+            };
+
+      // A clearly underage DOB cannot pass, regardless of the name.
+      if (
+        ageResult.status === "under_18" &&
+        ageResult.eligible === false
+      ) {
+        return res.json({
+          status: "under_18",
+          eligible: false,
+          nameMatch: extraction.nameMatch,
+          saved: false,
+        });
+      }
+
+      if (extraction.nameMatch === "mismatch") {
+        return res.json({
+          status: "name_mismatch",
+          eligible: null,
+          nameMatch: "mismatch",
+          saved: false,
+        });
+      }
+
+      if (
+        extraction.nameMatch !== "matched" ||
+        extraction.nameStatus !== "readable" ||
+        ageResult.status !== "meets_age_requirement" ||
+        ageResult.eligible !== true
+      ) {
+        return res.json({
+          status: "needs_review",
+          eligible: null,
+          nameMatch: extraction.nameMatch,
+          saved: false,
+        });
+      }
+
+      // Only this passing branch can save a result.
+      // Identity comes from the authenticated Convex query.
+      const callback = await fetch(
+        new URL(
+          "/age-check-result",
+          process.env.CONVEX_SITE_URL
+        ),
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization:
+              `Bearer ${process.env.AGE_CHECK_CALLBACK_SECRET}`,
+          },
+          body: JSON.stringify({
+            tokenIdentifier:
+              req.ageCheckIdentity.tokenIdentifier,
+            email: req.ageCheckIdentity.email,
+            legalFirstName: firstName,
+            legalLastName: lastName,
+            nameMatched: true,
+            ageEligible: true,
+          }),
+          signal: AbortSignal.timeout(15000),
+        }
+      );
+
+      if (!callback.ok) {
+        console.error(
+          "Saving document result failed. HTTP:",
+          callback.status
+        );
+
+        return res.status(
+          callback.status === 409 ? 409 : 502
+        ).json({
+          error:
+            callback.status === 409
+              ? "The result could not be saved. If your existing account has a different legal name, account review is required."
+              : "The checks passed, but the result could not be saved. Please try again.",
+        });
+      }
+
+      // Never return the extracted DOB or document text.
       return res.json({
-        status: "needs_review",
-        eligible: null,
+        status: "meets_age_requirement",
+        eligible: true,
+        nameMatch: "matched",
+        saved: true,
       });
+    } catch (error) {
+      // Never log images, names, DOBs, tokens, or secrets.
+      console.error(
+        "Document check failed. Code:",
+        error.status || "unknown"
+      );
+
+      return res.status(502).json({
+        error:
+          "Unable to complete the document check right now. Please try again.",
+      });
+    } finally {
+      clearUpload(req);
     }
-
-    return res.json(checkAge(extraction.dob, getToday()));
-  } catch (error) {
-    console.error("Age check failed. Code:", error.status || "unknown");
-
-    return res.status(502).json({
-      error: "Unable to read the image right now. Please try again.",
-    });
-  } finally {
-    clearUpload(req);
   }
-});
+);
 
+// Preserve your existing menu functionality.
 registerMenu(app);
+
 app.use((error, req, res, next) => {
   if (res.headersSent) return next(error);
 
@@ -130,9 +333,10 @@ app.use((error, req, res, next) => {
 
   if (error instanceof multer.MulterError) {
     return res.status(400).json({
-      error: error.code === "LIMIT_FILE_SIZE"
-        ? "Image must be 5 MB or smaller."
-        : "Upload exactly one image using the field name image.",
+      error:
+        error.code === "LIMIT_FILE_SIZE"
+          ? "Image must be 5 MB or smaller."
+          : "Upload one image with firstName and lastName only.",
     });
   }
 
@@ -148,7 +352,10 @@ app.use((error, req, res, next) => {
     });
   }
 
-  console.error("Request failed. Code:", error.status || "unknown");
+  console.error(
+    "Request failed. Code:",
+    error.status || "unknown"
+  );
 
   return res.status(500).json({
     error: "Something went wrong.",
@@ -156,5 +363,7 @@ app.use((error, req, res, next) => {
 });
 
 app.listen(PORT, "127.0.0.1", () => {
-  console.log(`Table 8 backend: http://localhost:${PORT}`);
+  console.log(
+    `Table 8 backend: http://localhost:${PORT}`
+  );
 });

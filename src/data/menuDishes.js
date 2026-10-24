@@ -6,7 +6,7 @@ const unique = items => [...new Map(items.map(item => [JSON.stringify(item), ite
 export function deduplicateDishes(dishes) {
   const byOption = new Map()
   for (const dish of dishes) {
-    const key = JSON.stringify([normalize(dish.name), normalize(dish.price)])
+    const key = dish.sourceItemId || JSON.stringify([normalize(dish.name), normalize(dish.price)])
     const previous = byOption.get(key)
     if (!previous) {
       byOption.set(key, { ...dish, listedIngredients: [...(dish.listedIngredients || [])], possibleAllergens: [...(dish.possibleAllergens || [])] })

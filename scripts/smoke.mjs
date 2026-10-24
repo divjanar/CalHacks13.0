@@ -59,18 +59,18 @@ try {
       }
     }
   }
-  // A browser-cached extraction renders immediately without approving it locally.
-  const cachedDishes = Array.from({ length: 8 }, (_, index) => ({ id: `fixture-${index}`, name: `Fixture rice ${index}`, price: '$5', description: 'Rice', listedIngredients: ['rice'], evidence: 'Rice $5', possibleAllergens: [] }))
+  // Cached source items render immediately while Gemini review is pending.
+  const cachedDishes = Array.from({ length: 201 }, (_, index) => ({ extractionStatus: 'pending', id: `fixture-${index}`, name: `Fixture rice ${index}`, price: '$5', description: 'Rice', listedIngredients: ['rice'], evidence: 'Rice $5', possibleAllergens: [] }))
   const fixture = { venueId: 'ChIJayGBoiRAjoARzA3Sc9KqN3g', mode: 'full', sourceUrl: 'https://santacruzdiner.com/-food-menu', dishes: cachedDishes }
   const fixtureKey = JSON.stringify([fixture.venueId, fixture.sourceUrl, 'full'])
-  globalThis.localStorage = { getItem: key => key === 'table8-extracted-menu-v6' ? JSON.stringify([{ key: fixtureKey, at: Date.now(), menu: fixture }]) : null }
+  globalThis.localStorage = { getItem: key => key === 'table8-extracted-menu-v7' ? JSON.stringify([{ key: fixtureKey, at: Date.now(), menu: fixture }]) : null }
   saved = JSON.stringify({ dinnerId: 'midweek', preferences: { diet: 'Hindu non-veg', allergies: ['Milk'], allergiesAnswered: true } })
   window.location.hash = '#/food'
   const cachedFood = renderToString(React.createElement(App))
-  assert.equal((cachedFood.match(/class="card menu-option"/g) || []).length, 8)
+  assert.equal((cachedFood.match(/class="card menu-option"/g) || []).length, 201)
   assert.match(cachedFood, /Top options/)
   assert.match(cachedFood, /Full menu/)
-  assert.doesNotMatch(cachedFood, /Reading the official restaurant menu|No conflict identified/)
+  assert.doesNotMatch(cachedFood, /Reading the official restaurant menu|No conflict, double check with the waiter|Gemini review pending/)
   globalThis.localStorage = originalLocalStorage
   saved = JSON.stringify({ signedIn: true, requested: false, restaurantConfirmed: false, dinnerId: 'pasta' })
   window.location.hash = '#/table'
