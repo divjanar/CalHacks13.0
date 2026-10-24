@@ -288,8 +288,8 @@ export default function Discover() {
   return (
     <Page
       className="discover-page"
-      title="Your next good evening"
-      intro="Choose an evening. We’ll bring eight local people to the same table."
+      title="Find your next table"
+      intro="Choose a table. Meet new people over good food."
       headingAside={
         <aside className="discover-host">
           <TypewriterSpeech
