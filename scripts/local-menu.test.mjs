@@ -170,6 +170,37 @@ test('blocked ordering site uses a disclosed source listing and never recommends
   assert.ok(source.items.every(item => !analyzeDishLocally(item, preferences).matching.localCandidate))
 })
 
+test('PDF and disclosed saved menus survive a backend job-cache reload', async () => {
+  const fs = require('node:fs/promises'), os = require('node:os'), path = require('node:path')
+  const { registerMenu } = require('../server/menu')
+  const venue = require('../src/data/sampleVenues.json')[0]
+  for (const sourceType of ['pdf', 'saved_official_listing']) {
+    const cacheDir = await fs.mkdtemp(path.join(os.tmpdir(), 'table8-cache-test-'))
+    try {
+      let calls = 0
+      const readMenuUrl = async () => { calls++; return { venueId: venue.id, mode: 'full', sourceType, dishes: [analyzeDishLocally(captain)] } }
+      async function run() {
+        const routes = {}
+        registerMenu({ post: (url, fn) => routes['POST ' + url] = fn, get: (url, fn) => routes['GET ' + url] = fn }, { cacheDir, readMenuUrl })
+        let job
+        const response = { status() { return this }, json(value) { job = structuredClone(value) } }
+        routes['POST /api/menu/jobs']({ body: { venueId: venue.id, mode: 'full' } }, response)
+        for (let i = 0; i < 100 && job.status === 'running'; i++) {
+          await new Promise(resolve => setTimeout(resolve, 5))
+          routes['GET /api/menu/jobs/:jobId']({ params: { jobId: job.jobId } }, response)
+        }
+        assert.equal(job.status, 'ready')
+      }
+      await run()
+      await run()
+      assert.equal(calls, 1)
+    } finally {
+      for (const name of await fs.readdir(cacheDir)) await fs.unlink(path.join(cacheDir, name))
+      await fs.rmdir(cacheDir)
+    }
+  }
+})
+
 test('reader configuration is explicit, rejects missing keys, and isolates API-key caches', t => {
   const names = ['MENU_READER', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_MENU_MODEL']
   const saved = Object.fromEntries(names.map(name => [name, process.env[name]]))

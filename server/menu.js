@@ -136,7 +136,7 @@ function registerMenu(app, dependencies = {}) {
         Date.now() - saved.at >= TTL ||
         saved.result?.venueId !== venue.id ||
         saved.result?.mode !== mode ||
-        saved.result?.sourceType !== "official_menu_text" ||
+        !["official_menu_text", "pdf", "saved_official_listing"].includes(saved.result?.sourceType) ||
         !validResult(saved.result)
       ) {
         return null;
