@@ -45,7 +45,7 @@ Sign-in, account creation, reset, and verification require an address ending in 
 
 Preferences and local demo flags persist in this tab's session storage, with an in-memory fallback. Email, passwords, report text, and identity documents are not persisted or sent. The optional updates choice is separate from required acknowledgments, with no marketing subscription created.
 
-Menu results distinguish potential fits, unknown information, and conflicts. The menu reader uses Gemini and the saved account needs; see Menu analysis below. They do not determine allergy safety or cross-contact. Table-wide counts (eight reviewed, six potential, two pending) are a fixed fictional snapshot, clearly identified as such; they are not derived from live diner data. Confirmation screens are sample outcomes and never represent a real restaurant reservation. Restaurant-question controls display a question locally and send nothing.
+Menu results distinguish potential fits, unknown information, and conflicts. The menu reader uses local text extraction and explicit saved account rules; see Menu analysis below. They do not determine allergy safety or cross-contact. Table-wide counts (eight reviewed, six potential, two pending) are a fixed fictional snapshot, clearly identified as such; they are not derived from live diner data. Confirmation screens are sample outcomes and never represent a real restaurant reservation. Restaurant-question controls display a question locally and send nothing.
 
 ## Original artwork and motion
 
@@ -101,80 +101,61 @@ Local area is now required in User settings and is normalized to city, full stat
 
 ### Menu analysis
 
-The menu flow fetches the official `menuUrl` stored in `src/data/sampleVenues.json`.
-Santa Cruz Diner is configured as `ChIJayGBoiRAjoARzA3Sc9KqN3g` with
-`https://santacruzdiner.com/-food-menu`. Other restaurants currently have
-`menuUrl: null` and show an explicit configuration error; no search fallback,
-upload or diner-entered URL is used. Add verified official URLs to venue data
-to enable those restaurants. The fetcher accepts only configured HTTPS URLs,
-rejects credentials/ports and cross-host redirects, limits HTML to 2 MB, and
-extracts all readable text within that download limit.
+Menus and dietary warnings run locally by default, without Gemini. The backend fetches the
+configured official menu URL, using the existing HTML/browser or PDF reader, and
+inventories structured menu cards or supported price lines. It never invents dishes
+when a format cannot be parsed. Diners do not upload menus or enter arbitrary URLs.
 
-`server/menu.js` exposes:
+The full menu is shown by default. Ingredients named in each dish's name and
+description appear beneath its title. A deterministic vocabulary copies exact menu
+words; it does not infer recipes (a croissant does not imply butter or milk).
+Supporting source text is retained. This vocabulary cannot identify every ingredient.
 
-- `POST /api/menu/jobs` with `{ venueId, mode: "preview" | "full" }` returns a job ID immediately.
-- `GET /api/menu/jobs/:jobId` returns progress, extracted dishes, and useful errors.
-- `POST /api/menu/reviews` with `{ menuJobId, preferences }` starts a separate background dietary review of server-extracted dishes.
+Local account checks use dietaryMatching.js and the explicit dietaryGuidance.js
+presets. They display selected allergy and diet warnings, such as Dairy for cheese
+and Hindu non-veg for ham. Changing account needs recalculates warnings immediately
+without API requests. Top options shows up to eight locally checked candidates with
+no listed conflict, not allergy-safe approvals. Missing recipes, sourcing,
+cross-contact, and personal notes require restaurant confirmation. Halal/Kosher
+sourcing is never certified by text matching.
 
-For SpotApps menus such as Santa Cruz Diner, the fetcher inventories every
-`.food-item-holder` card, including section context, names, prices and descriptions.
-Exact repeated cards are collapsed; genuinely distinct options keep their own source
-IDs. Gemini then enriches every inventory item in batches of eight, with two batches
-running at once. Omitted items get one targeted retry. Invalid optional fields are
-cleared without deleting real dishes. A provider failure leaves the item visible
-with unknown ingredients and compatibility, and **Retry remaining items** reuses
-successful item results. The page reports listed, read, pending, and failed counts.
-Coverage is complete only when every inventory item was processed; this describes
-the configured page, not unlisted specials, other websites, or offline offerings.
+POST /api/menu/jobs and GET /api/menu/jobs/:jobId retain their existing background
+job interface and shared in-flight requests. Extraction caches are independent of
+account preferences. Server caches separate reader mode, configured menu URL,
+model, and a private hash of the API key so key rotation or mode changes cannot
+reuse the wrong extraction. Keys and their fingerprints are never sent to clients.
+POST /api/menu/reviews returns 410; warnings always use local rules.
+The separate ID age-check feature is unchanged.
 
-The app requests the full menu by default, starting when dinner details open.
-The food page shows extracted dishes as sections finish. Adjacent **Full menu**
-and **Top options** buttons switch between all extracted dishes and up to eight
-assessed matches for the account. Switching views reuses the same results. The
-backend preview mode remains available but is not requested by these screens.
-There is no promise that eight suitable dishes exist. Cached extracted dishes render immediately. On a first
-visit, menu extraction has an honest loading message. Dietary review shows its
-own pending state and can be retried independently.
-Every inventoried dish is eligible for Gemini dietary review using its official
-menu evidence, including dishes whose ingredient extraction is incomplete. Such
-items cannot become potential fits until extraction completes. The page reports
-the reviewed count and distinguishes Gemini review from unknown complete
-ingredients, sourcing and cross-contact. Invalid item responses retain successful
-assessments and allow later batches to continue; provider-wide quota/outage errors
-pause work with a visible retry. Per-item in-flight reviews are shared and retries
-reuse successful assessments for the same evidence and account needs.
+To change menu readers, set MENU_READER in server/.env:
 
-Extraction caches and in-flight requests are shared independently of account
-preferences. Source-backed extraction results are cached for 24 hours in ignored
-`server/.menu-cache-v2` and in browser storage (`table8-extracted-menu-v7`).
-Menu cache keys include the configured URL and server model setting. Account
-reviews are kept separately in memory and tab session storage, keyed by the exact
-menu evidence, saved diet, allergies and notes. Completed reviews survive menu
-progress and refresh, but are never reused for different allergies or changed
-ingredients. Dietary data is not written to disk or the shared browser menu cache.
-Only unfinished dish IDs are requested on subsequent review jobs. A backend restart invalidates active
-jobs but reloads saved extractions. Retry reconnects/restarts work. Temporary
-provider errors retry at most three times per call with backoff. A missing or
-invalid dietary assessment gets at most one targeted repair attempt. Failed
-items remain visible and unconfirmed, never replaced with demo dishes. Successful item results persist even in a partial cache, so a backend restart resumes only unfinished items.
+- MENU_READER=local (default): no Gemini key needed, no Gemini SDK loaded, no AI calls.
+- MENU_READER=gemini: Gemini extracts source-supported ingredients using
+  GEMINI_API_KEY and GEMINI_MENU_MODEL (or GEMINI_MODEL). Both modes keep the same
+  local dietary warnings and unknown sourcing/cross-contact. Missing key/model,
+  invalid mode, unsupported results, and provider failures are explicit errors;
+  the selected Gemini reader does not silently switch to local mode.
 
-`server/menuReader.js` validates structured Gemini output against retrieved menu
-text, preserves dish excerpts and supporting allergen evidence, and rejects
-unsupported dishes. Reviews use the explicit server-loaded rules in
-`src/data/dietaryGuidance.js` plus saved allergies and personal notes.
-`src/data/dietaryMatching.js` adds local warnings but never approves an unassessed
-dish or overrides an AI/local conflict. Ingredients, religious sourcing, and
-cross-contact remain unknown until confirmed by the restaurant; results never
-establish allergy safety or religious certification. Full menu coverage remains
-unverified, especially for image/PDF/JavaScript-only menus (HTML is supported).
+Replace GEMINI_API_KEY only in the backend environment; never put it in a VITE
+variable. Existing model IDs are not changed automatically. Configure official
+menu URLs in src/data/sampleVenues.json; no diner-supplied URL is fetched.
+Changing keys does not bypass provider quotas shared by the same Google project.
+Restart the backend and refresh the frontend after changing readers or keys;
+rebuild/restart both after editing venue data. A cached result may appear while
+the newly configured reader loads. Gemini mode still needs available API quota.
 
-Run the frontend with `npm.cmd run dev`; run the backend with `node server/index.js`
-(or `node index.js` from `server`). Credentials are read from `server/.env` using
-`GEMINI_API_KEY`, `GEMINI_MODEL`, and the existing optional `GEMINI_MENU_MODEL`
-override. Model values are unchanged. The ID age-check endpoint and its model
-setting remain separate. Never put Gemini keys in Vite variables.
+Run the frontend with npm.cmd run dev and the backend with node server/index.js.
+Restart both after switching to the local reader. The first visit still downloads
+the official website; cached menus appear immediately on later visits.
 
-Checks: `node --test server/menu.test.cjs`, `npm.cmd run test:smoke`,
-`npm.cmd run build`. `node scripts/menu-live-check.cjs` is an optional paid,
-networked preview and four-dish review check using the configured backend key;
-by default. Add `--full` to validate and cache a live complete inventory extraction; this makes multiple paid Gemini requests. Add `--inventory` to inspect the source inventory without Gemini.
+Validation: npm.cmd run test:menu; npm.cmd run build.
+Optional live official-source check (no Gemini calls): node scripts/menu-live-check.cjs.
+
+All configured menus: node scripts/menu-all-live.cjs. Piccino uses inline PDF
+prices; Makai uses a configured three-column PDF adapter; Ghirardelli uses its
+published HTML captions; Arsicault and Salt & Straw use rendered ordering pages.
+Ghirardelli publishes names without prices or ingredient descriptions on that
+page. Pretty Good Advice blocks automated requests (HTTP 403); a dated saved
+official listing is disclosed on the food page, with no invented recipes and no
+Top options recommendations. Refresh server/menuSnapshots/pretty-good-advice.json
+from the official listing when it changes. This is not a live availability feed.

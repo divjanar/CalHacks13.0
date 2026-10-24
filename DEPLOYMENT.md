@@ -2,6 +2,12 @@
 
 Keep the current menu reader and food page unchanged when updating hosting.
 
+The Docker image defaults to MENU_READER=local, preserving the working local
+reader without consuming Gemini quota. Render can explicitly override this with
+MENU_READER=gemini when desired. Keep the existing model and key variables.
+The image includes the root package.json so shared src/data ESM modules load
+correctly from the CommonJS backend. Never copy local .env or menu caches.
+
 - Frontend: Vercel, `https://table8.vip` and `https://cal-hacks13-0-8miz.vercel.app`.
 - Backend: Render, `https://table8-api.onrender.com`.
 - Repository: `divjanar/CalHacks13.0`, branch `main`.

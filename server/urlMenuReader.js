@@ -1,30 +1,6 @@
 const crypto = require("node:crypto");
 const { fetchMenuText } = require("./menuFetcher");
-const { readMenu } = require("./menuReader");
-
-function splitMenu(text, size = 5500) {
-  const parts = [];
-
-  for (let start = 0; start < text.length;) {
-    let end = Math.min(start + size, text.length);
-    const boundary = text.lastIndexOf("\n", end);
-
-    if (
-      end < text.length &&
-      boundary > start + size / 2
-    ) {
-      end = boundary;
-    }
-
-    parts.push(text.slice(start, end));
-
-    if (end === text.length) break;
-
-    start = Math.max(start + 1, end - 500);
-  }
-
-  return parts;
-}
+const { menuSettings } = require("./menuSettings");
 
 function normalize(value) {
   return String(value || "")
@@ -70,6 +46,25 @@ function inventoryPricedItems(source, venue) {
   const pricePattern = /^[$£€]\s*\d+(?:[.,]\d{1,2})?$/;
   const entries = [];
 
+  // PDF menus often put a price after a vertical bar or a spaced dash.
+  const inline = lines.map((line, index) => {
+    const match = line.match(/^([^|]+?)\s+(?:\||-)\s*\.?\s*\$?(\d+(?:\.\d{1,2})?(?:\/\d+)?)\.?$/);
+    if (!match || /^\+|surcharge|transactions/i.test(match[1])) return null;
+    const [name, ...description] = match[1].split(/,\s*/);
+    const following = lines[index + 1] || '';
+    // Piccino prints cocktail recipes on a separate, comma-separated line.
+    if (!/[|]/.test(following) && /,/.test(following) && !/surcharge|transactions/i.test(following)) description.push(following);
+    return { name, price: '$' + match[2], description: description.join(', '), index, evidence: line };
+  }).filter(Boolean);
+  if (inline.length) {
+    source.items = inline.map(entry => {
+      const id = dishKey(venue.id, entry);
+      return { ...entry, id, sourceItemId: id, section: '', listedIngredients: [], possibleAllergens: [] };
+    });
+    source.inventoryComplete = false;
+    return;
+  }
+
   for (let index = 1; index < lines.length; index++) {
     if (!pricePattern.test(lines[index])) continue;
 
@@ -80,6 +75,7 @@ function inventoryPricedItems(source, venue) {
     entries.push({
       name,
       price: lines[index],
+      priceIndex: index,
       nameIndex: index - 1,
     });
   }
@@ -95,6 +91,7 @@ function inventoryPricedItems(source, venue) {
       section: "",
       name: entry.name,
       price: entry.price,
+      description: lines.slice(entry.priceIndex + 1, next ? next.nameIndex : lines.length).join(' '),
     });
 
     if (seen.has(id)) continue;
@@ -114,6 +111,7 @@ function inventoryPricedItems(source, venue) {
       sourceItemId: id,
       name: entry.name,
       price: entry.price,
+      description: lines.slice(entry.priceIndex + 1, next ? next.nameIndex : lines.length).join(' '),
       section: "",
       evidence,
       listedIngredients: [],
@@ -153,7 +151,7 @@ async function fetchPdfText(venue) {
     allowedHosts.add("static1.squarespace.com");
   }
 
-  const signal = AbortSignal.timeout(30000);
+  const signal = AbortSignal.timeout(60000);
   let response;
 
   for (let attempt = 0; attempt <= 3; attempt++) {
@@ -268,6 +266,11 @@ async function fetchPdfText(venue) {
       );
     }
 
+    let items = [];
+    if (venue.menuFormat === 'three-column-pdf') {
+      const { readColumnPdf } = require('./menuFormats');
+      items = await readColumnPdf(Buffer.concat(chunks), venue, result.pages);
+    }
     return {
       venueId: venue.id,
       restaurant: venue.displayName.text,
@@ -276,7 +279,7 @@ async function fetchPdfText(venue) {
       fetchedAt: new Date().toISOString(),
       sourceType: "pdf",
       text,
-      items: [],
+      items,
       inventoryComplete: false,
       truncated: false,
     };
@@ -289,6 +292,7 @@ async function readMenuUrl(
   venue,
   { preview = true } = {}
 ) {
+  const settings = menuSettings();
   if (!venue?.menuUrl) {
     throw new Error(
       "An official menu URL has not been configured."
@@ -308,265 +312,40 @@ async function readMenuUrl(
     ? await fetchPdfText(venue)
     : await fetchMenuText(venue.id);
 
-  // HTML menus without cards get a price-line inventory.
-  // Keep the existing PDF extraction path unchanged.
-  if (!isPdf) {
-    inventoryPricedItems(source, venue);
+  inventoryPricedItems(source, venue);
+  if (!source.items?.length) {
+    throw new Error("This menu has no locally readable item structure. No dishes were invented; configure a text-based official menu for this restaurant.");
   }
-
-  const dishesById = new Map();
-  const failedParts = [];
-  let firstBatchError;
-
-  let validationNeedsReview = Boolean(source.truncated);
-
-  const hasInventory =
-    Array.isArray(source.items) &&
-    source.items.length > 0;
-
-  const inventory = hasInventory
-    ? preview
-      ? source.items.slice(0, 8)
-      : source.items
-    : [];
-
-  // Keep all inventoried items visible, even if Gemini
-  // cannot finish extracting their details.
-  for (const item of inventory) {
-    dishesById.set(item.id, {
-      ...item,
-      sourceUrl: source.sourceUrl,
-      extractionStatus: "pending",
-    });
-  }
-
-  const batches = [];
-
-  if (hasInventory) {
-    for (
-      let offset = 0;
-      offset < inventory.length;
-      offset += 8
-    ) {
-      const items = inventory.slice(offset, offset + 8);
-
-      batches.push({
-        ...source,
-        items,
-        text: items
-          .map((item) => item.evidence)
-          .join("\n\n"),
-      });
+  const { analyzeDishLocally } = await import("../src/data/localMenuAnalysis.js");
+  const items = preview ? source.items.slice(0, 8) : source.items;
+  let dishes = items.map(item => analyzeDishLocally({ ...item, sourceUrl: source.sourceUrl }));
+  if (settings.reader === 'gemini') {
+    // Lazy load so local mode never loads the SDK or consumes API quota.
+    const { readMenu } = require('./menuReader');
+    const extracted = [];
+    for (let offset = 0; offset < items.length; offset += 8) {
+      const batch = items.slice(offset, offset + 8);
+      const result = await readMenu({ ...source, items: batch, text: batch.map(item => item.evidence).join('\n\n') });
+      const byId = new Map(result.dishes.filter(item => batch.some(expected => expected.id === item.id)).map(item => [item.id, item]));
+      if (byId.size !== batch.length) throw new Error('Gemini did not return supported ingredients for every requested menu item. Retry or select MENU_READER=local.');
+      for (const item of batch) extracted.push({ ...byId.get(item.id), sourceUrl: source.sourceUrl, analysisMethod: 'gemini' });
     }
-  } else {
-    const excerpts = splitMenu(source.text);
-
-    const selectedExcerpts = preview
-      ? excerpts.slice(0, 1)
-      : excerpts;
-
-    for (const text of selectedExcerpts) {
-      batches.push({
-        ...source,
-        items: [],
-        text,
-      });
-    }
+    dishes = extracted;
   }
-
-  for (let index = 0; index < batches.length; index++) {
-    const batch = batches[index];
-
-    console.log(
-      `[menu] Reading part ${index + 1}/${batches.length}…`
-    );
-
-    try {
-      const output = await readMenu(batch, {
-        preview: preview && !hasInventory,
-      });
-
-      if (output.status !== "readable") {
-        validationNeedsReview = true;
-      }
-
-      for (const dish of output.dishes) {
-        const id = hasInventory
-          ? dish.id
-          : dishKey(venue.id, dish);
-
-        dishesById.set(id, {
-          ...dish,
-          id,
-          sourceUrl: source.sourceUrl,
-          extractionStatus: "readable",
-        });
-      }
-
-      if (hasInventory) {
-        const missing = batch.items.filter(
-          (item) =>
-            dishesById.get(item.id)?.extractionStatus !==
-            "readable"
-        );
-
-        // Retry omitted inventory items once.
-        if (missing.length) {
-          const repair = await readMenu({
-            ...source,
-            items: missing,
-            text: missing
-              .map((item) => item.evidence)
-              .join("\n\n"),
-          });
-
-          for (const dish of repair.dishes) {
-            dishesById.set(dish.id, {
-              ...dish,
-              sourceUrl: source.sourceUrl,
-              extractionStatus: "readable",
-            });
-          }
-
-          for (const item of missing) {
-            if (
-              dishesById.get(item.id)?.extractionStatus !==
-              "readable"
-            ) {
-              validationNeedsReview = true;
-
-              dishesById.set(item.id, {
-                ...item,
-                sourceUrl: source.sourceUrl,
-                extractionStatus: "needs_review",
-                extractionError:
-                  "Menu details could not be extracted reliably.",
-              });
-            }
-          }
-        }
-      }
-    } catch (error) {
-      firstBatchError ||= error;
-
-      console.error(
-        `[menu] Part ${index + 1} failed:`,
-        error.message || error
-      );
-
-      validationNeedsReview = true;
-
-      failedParts.push({
-        part: index + 1,
-        error: "This menu section could not be fully read.",
-      });
-
-      for (const item of batch.items) {
-        if (
-          dishesById.get(item.id)?.extractionStatus !==
-          "readable"
-        ) {
-          dishesById.set(item.id, {
-            ...item,
-            sourceUrl: source.sourceUrl,
-            extractionStatus: "needs_review",
-            extractionError:
-              "Menu details could not be extracted reliably.",
-          });
-        }
-      }
-
-      // Stop on provider-wide quota or access failures.
-      if (
-        [429, 401, 403].includes(
-          Number(error.status || error.code)
-        )
-      ) {
-        if (!dishesById.size) {
-          throw error;
-        }
-
-        for (
-          let remaining = index + 1;
-          remaining < batches.length;
-          remaining++
-        ) {
-          failedParts.push({
-            part: remaining + 1,
-            error:
-              "Reading stopped because of a provider limit.",
-          });
-        }
-
-        break;
-      }
-    }
-  }
-
-  // Mark entries skipped after a provider failure.
-  for (const [id, dish] of dishesById) {
-    if (dish.extractionStatus === "pending") {
-      dishesById.set(id, {
-        ...dish,
-        extractionStatus: "needs_review",
-        extractionError: "Menu reading did not finish.",
-      });
-    }
-  }
-
-  let dishes = [...dishesById.values()];
-
-  if (preview) {
-    dishes = dishes.slice(0, 8);
-  }
-
-  if (!dishes.length) {
-    // Preserve the actual provider or validation error.
-    if (firstBatchError) {
-      throw firstBatchError;
-    }
-
-    throw new Error(
-      "No dishes could be read from this menu."
-    );
-  }
-
-  const extracted = dishes.filter(
-    (item) => item.extractionStatus === "readable"
-  ).length;
-
-  const failed = dishes.length - extracted;
-
-  console.log(
-    `[menu] Finished: ${dishes.length} dishes listed, ` +
-    `${extracted} with extracted details.`
-  );
-
   return {
-    venueId: venue.id,
-    restaurant: venue.displayName.text,
-    address: venue.formattedAddress,
-    mode: preview ? "preview" : "full",
-    sourceUrl: source.sourceUrl,
-    sourceType: "official_menu_text",
-    fetchedAt: source.fetchedAt,
-    dishes,
-    status: "partial",
-    intentionalPreview: preview,
-    coverageVerified: false,
-    validationNeedsReview:
-      validationNeedsReview || failed > 0,
-    sourceTruncated: Boolean(source.truncated),
-    coverage: {
-      listed: dishes.length,
-      extracted,
-      failed,
-      remaining: 0,
-    },
-    failedParts,
+    venueId: venue.id, restaurant: venue.displayName.text, address: venue.formattedAddress,
+    mode: preview ? "preview" : "full", sourceUrl: source.sourceUrl,
+    sourceType: source.sourceType || "official_menu_text", sourceNotice: source.sourceNotice || '', analysisMethod: settings.reader, fetchedAt: source.fetchedAt,
+    dishes, status: "readable", intentionalPreview: preview,
+    coverageVerified: !preview && Boolean(source.inventoryComplete),
+    validationNeedsReview: Boolean(source.truncated), sourceTruncated: Boolean(source.truncated),
+    coverage: { listed: dishes.length, extracted: dishes.length, failed: 0, remaining: 0 },
+    failedParts: [],
   };
 }
 
 module.exports = {
   readMenuUrl,
+  fetchPdfText,
+  inventoryPricedItems,
 };

@@ -4,11 +4,10 @@ const path = require("node:path");
 
 const venues = require("../src/data/sampleVenues.json");
 const { readMenuUrl } = require("./urlMenuReader");
-const { assessMenu } = require("./menuReader");
+const { menuSettings } = require("./menuSettings");
 
 const TTL = 24 * 60 * 60 * 1000;
 const MAX_JOBS = 500;
-const MAX_REVIEWS = 4000;
 
 const hash = value =>
   crypto
@@ -45,11 +44,11 @@ function publicError(error) {
   const code = Number(error?.status || error?.code);
 
   if (code === 429) {
-    return "Gemini reached its usage limit. Please retry later.";
+    return "The official menu website is rate-limiting requests. Please retry later.";
   }
 
   if ([500, 502, 503, 504].includes(code)) {
-    return "Gemini is temporarily unavailable. Please retry later.";
+    return "The official menu website is temporarily unavailable. Please retry later.";
   }
 
   if (
@@ -60,7 +59,7 @@ function publicError(error) {
   }
 
   if ([400, 401, 403, 404].includes(code)) {
-    return "Gemini rejected the request. Check the configured model, API key, and URL Context access.";
+    return "The official menu website rejected the request. Check its configured URL.";
   }
 
   const message = String(error?.message || "");
@@ -81,9 +80,6 @@ function registerMenu(app, dependencies = {}) {
   const readUrl =
     dependencies.readMenuUrl || readMenuUrl;
 
-  const assess =
-    dependencies.assessMenu || assessMenu;
-
   const cacheDir =
     dependencies.cacheDir === undefined
       ? path.join(__dirname, ".menu-cache-v2")
@@ -91,18 +87,13 @@ function registerMenu(app, dependencies = {}) {
 
   const jobs = new Map();
   const byKey = new Map();
-  const reviews = new Map();
-
-  const model = () =>
-    process.env.GEMINI_MENU_MODEL ||
-    process.env.GEMINI_MODEL;
 
   const extractionKey = (venue, mode) =>
     hash([
-      "url-context-v2",
+      "switchable-menu-v2",
+      menuSettings().identity,
       venue.id,
       venue.menuUrl,
-      model(),
       mode,
     ]);
 
@@ -210,11 +201,6 @@ function registerMenu(app, dependencies = {}) {
       }
     }
 
-    for (const [key, entry] of reviews) {
-      if (now - entry.at >= TTL) {
-        reviews.delete(key);
-      }
-    }
   }
 
   function start(key, task) {
@@ -308,7 +294,9 @@ function registerMenu(app, dependencies = {}) {
       });
     }
 
-    const key = extractionKey(venue, mode);
+    let key;
+    try { key = extractionKey(venue, mode); }
+    catch (error) { return res.status(400).json({ error: publicError(error) }); }
 
     if (
       refresh &&
@@ -355,7 +343,7 @@ function registerMenu(app, dependencies = {}) {
         }
 
         console.log(
-          `[menu] Gemini reading configured URL: ${mode}`
+          `[menu] Reading configured menu (${menuSettings().reader}): ${mode}`
         );
 
         const result = await readUrl(venue, {
@@ -364,7 +352,7 @@ function registerMenu(app, dependencies = {}) {
 
         if (!validResult(result)) {
           throw new Error(
-            "Gemini returned no usable menu dishes."
+            "The official menu returned no usable dishes."
           );
         }
 
@@ -396,260 +384,7 @@ function registerMenu(app, dependencies = {}) {
     }
   });
 
-  // Review extracted dishes against the supplied dining needs.
-  app.post("/api/menu/reviews", async (req, res) => {
-    try {
-      cleanup();
-
-      const menuJob = jobs.get(req.body?.menuJobId);
-      const supplied = req.body?.preferences;
-
-      if (!menuJob?.result?.dishes?.length) {
-        return res.status(404).json({
-          error:
-            "The extracted menu job is unavailable. Retry menu reading to reconnect.",
-        });
-      }
-
-      if (
-        !supplied ||
-        typeof supplied.diet !== "string" ||
-        supplied.diet.length > 100 ||
-        !Array.isArray(supplied.allergies) ||
-        supplied.allergies.length > 30 ||
-        !supplied.allergies.every(
-          value =>
-            typeof value === "string" &&
-            value.length <= 100
-        ) ||
-        ["notes", "religiousDetails"].some(
-          key =>
-            supplied[key] !== undefined &&
-            (
-              typeof supplied[key] !== "string" ||
-              supplied[key].length > 4000
-            )
-        )
-      ) {
-        return res.status(400).json({
-          error:
-            "Provide a menu job and valid dining preferences.",
-        });
-      }
-
-      const preferences = {
-        diet: supplied.diet,
-        allergies: [...new Set(supplied.allergies)].sort(),
-        allergiesAnswered:
-          supplied.allergiesAnswered === true,
-        notes: supplied.notes || "",
-        religiousDetails: supplied.religiousDetails || "",
-      };
-
-      const { dietaryPresets } = await import(
-        "../src/data/dietaryGuidance.js"
-      );
-
-      const preset =
-        dietaryPresets[preferences.diet] || null;
-
-      const eligible = menuJob.result.dishes;
-      const ids = req.body.dishIds;
-
-      const eligibleIds = new Set(
-        eligible.map(item => item.id)
-      );
-
-      if (
-        ids !== undefined &&
-        (
-          !Array.isArray(ids) ||
-          ids.length === 0 ||
-          ids.length > 2000 ||
-          new Set(ids).size !== ids.length ||
-          !ids.every(
-            id =>
-              typeof id === "string" &&
-              eligibleIds.has(id)
-          )
-        )
-      ) {
-        return res.status(400).json({
-          error:
-            "Request only valid dish IDs from this menu job.",
-        });
-      }
-
-      const requestedIds = ids ? new Set(ids) : null;
-
-      const dishes = structuredClone(
-        requestedIds
-          ? eligible.filter(item => requestedIds.has(item.id))
-          : eligible
-      );
-
-      const key = hash([
-        "url-context-review-v1",
-        model(),
-        dishes,
-        preferences,
-        preset,
-      ]);
-
-      const job = start(key, async job => {
-        job.result = {
-          assessments: [],
-          failedItems: [],
-        };
-
-        job.progress.total = dishes.length;
-
-        const itemKey = item =>
-          hash([
-            model(),
-            menuJob.result.venueId,
-            menuJob.result.sourceUrl,
-            item,
-            preferences,
-            preset,
-          ]);
-
-        for (
-          let offset = 0;
-          offset < dishes.length;
-          offset += 4
-        ) {
-          const batch = dishes.slice(offset, offset + 4);
-
-          const missing = batch.filter(item => {
-            const entry = reviews.get(itemKey(item));
-
-            return (
-              !entry ||
-              Date.now() - entry.at >= TTL
-            );
-          });
-
-          if (missing.length) {
-            const shared = Promise.resolve().then(() =>
-              assess(missing, preferences, preset)
-            );
-
-            for (const item of missing) {
-              const reviewKey = itemKey(item);
-
-              const task = shared.then(
-                assessments => {
-                  const assessment = assessments.find(
-                    result => result.dishId === item.id
-                  );
-
-                  if (!assessment) {
-                    throw new Error(
-                      "Gemini omitted a requested dietary assessment."
-                    );
-                  }
-
-                  return assessment;
-                },
-                error => {
-                  const assessment =
-                    error.assessments?.find(
-                      result => result.dishId === item.id
-                    );
-
-                  if (assessment) return assessment;
-
-                  throw error;
-                }
-              );
-
-              const entry = {
-                at: Date.now(),
-                task,
-              };
-
-              reviews.set(reviewKey, entry);
-
-              void task.catch(() => {
-                if (reviews.get(reviewKey) === entry) {
-                  reviews.delete(reviewKey);
-                }
-              });
-            }
-          }
-
-          // Capture promises before their rejection handlers
-          // can remove failed cache entries.
-          const tasks = batch.map(
-            item => reviews.get(itemKey(item)).task
-          );
-
-          const settled = await Promise.allSettled(tasks);
-          let providerFailure = null;
-
-          settled.forEach((result, index) => {
-            if (result.status === "fulfilled") {
-              job.result.assessments.push(result.value);
-              return;
-            }
-
-            job.result.failedItems.push({
-              dishId: batch[index].id,
-              error: publicError(result.reason),
-            });
-
-            const code = Number(
-              result.reason?.status ||
-              result.reason?.code
-            );
-
-            if (
-              [429, 401, 403, 503].includes(code)
-            ) {
-              providerFailure = result.reason;
-            }
-          });
-
-          job.progress.completed += batch.length;
-
-          // Bound the review cache.
-          while (reviews.size > MAX_REVIEWS) {
-            reviews.delete(reviews.keys().next().value);
-          }
-
-          if (providerFailure) {
-            const remaining = dishes.slice(
-              offset + batch.length
-            );
-
-            job.result.failedItems.push(
-              ...remaining.map(item => ({
-                dishId: item.id,
-                error: publicError(providerFailure),
-              }))
-            );
-
-            throw providerFailure;
-          }
-        }
-
-        if (job.result.failedItems.length) {
-          throw new Error(
-            `${job.result.failedItems.length} dishes still need Gemini review. Completed assessments were retained. Retry dietary review for the remaining dishes.`
-          );
-        }
-      });
-
-      return res.status(202).json(serialize(job));
-    } catch (error) {
-      return res.status(503).json({
-        error: publicError(error),
-      });
-    }
-  });
-
-  // Polling this endpoint does not make another Gemini call.
+  app.post("/api/menu/reviews", (req, res) => res.status(410).json({ error: "Menu checks now run locally against saved dietary needs. Gemini reviews are disabled." }));
   app.get("/api/menu/jobs/:jobId", (req, res) => {
     cleanup();
 

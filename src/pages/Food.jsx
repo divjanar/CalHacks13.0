@@ -12,14 +12,14 @@ function category(dish) {
   const matching = dish.matching || {}
 
   if (
-    matching.assessed &&
-    matching.recommended &&
+    matching.checkedLocally &&
+    matching.localCandidate &&
     !matching.hasConflict
   ) {
     return 0
   }
 
-  if (matching.assessed && !matching.hasConflict) {
+  if (matching.checkedLocally && !matching.hasConflict) {
     return 1
   }
 
@@ -47,7 +47,7 @@ export default function Food() {
   const [view, setView] = useState('full')
 
   // Both views use the full extraction.
-  // Only the Top options display is limited to eight.
+  // Top options show locally checked candidates, never safety guarantees.
   const full = useRestaurantMenu(
     dinner,
     preferences,
@@ -60,8 +60,8 @@ export default function Food() {
 
   const topDishes = rank(allDishes)
     .filter(dish =>
-      dish.matching?.assessed &&
-      dish.matching?.recommended &&
+      dish.matching?.checkedLocally &&
+      dish.matching?.localCandidate &&
       !dish.matching?.hasConflict
     )
     .slice(0, 8)
@@ -75,7 +75,7 @@ export default function Food() {
     <Page
       className="food-page"
       title="A menu that works for you."
-      intro={`${dinner.restaurant} · Reviewed against your saved dining needs.`}
+      intro={`${dinner.restaurant} · Checked locally against your saved dining needs.`}
     >
       <Notice>
         Your saved needs:{' '}
@@ -138,9 +138,11 @@ export default function Food() {
         </button>
       </div>
 
+      {full.menu?.sourceNotice && <Notice>{full.menu.sourceNotice}</Notice>}
+
       {!full.menu && full.loading && (
         <p role="status">
-          Gemini is reading the restaurant’s full menu…
+          Loading the official restaurant menu…
         </p>
       )}
 
@@ -164,14 +166,14 @@ export default function Food() {
           <h2>
             {showTop
               ? `Top options (${topDishes.length})`
-              : `Full menu · ${allDishes.length} dishes read`}
+              : `Full menu (${allDishes.length})`}
           </h2>
 
           {showTop ? (
             <p className="muted">
-              Up to eight assessed options with no identified
-              conflicts appear here. Restaurant confirmation
-              is still required.
+              Up to eight options with no conflicts found in the listed text.
+              These use local rules, not a complete ingredient or sourcing review.
+              Confirm with the restaurant.
             </p>
           ) : (
             <p className="muted">
@@ -182,21 +184,15 @@ export default function Food() {
 
           {showTop && topDishes.length === 0 && (
             <p role="status">
-              {full.reviewing || full.loading
-                ? 'Options will appear as Gemini completes the dietary checks.'
-                : 'No assessed options currently meet the Top options criteria. Review the full menu for conflicts and uncertainties.'}
+              {full.loading
+                ? 'Options will appear when the official menu loads.'
+                : 'No options currently meet the local checking criteria. Review the full menu and confirm your needs with the restaurant.'}
             </p>
           )}
 
           {full.loading && (
             <p role="status">
               Reading the menu. Available dishes remain visible.
-            </p>
-          )}
-
-          {full.reviewing && (
-            <p role="status">
-              Checking dishes against your saved dining needs…
             </p>
           )}
 
@@ -251,14 +247,10 @@ export default function Food() {
                 dish.listedIngredients || []
 
               const label = matching.hasConflict
-                ? matching.assessed
-                  ? 'Conflict identified'
-                  : 'Warning identified'
-                : !matching.assessed
-                  ? 'Check with the waiter'
-                  : matching.recommended
-                    ? 'No conflict identified'
-                    : 'Needs confirmation'
+                ? 'Warning identified'
+                : matching.localCandidate
+                  ? 'No conflict found in listed ingredients — double check with the waiter'
+                  : 'Check with the waiter'
 
               return (
                 <article
@@ -276,42 +268,23 @@ export default function Food() {
                     {dish.price && ` · ${dish.price}`}
                   </h2>
 
-                  {dish.description && (
-                    <p>{dish.description}</p>
-                  )}
-
                   <p>
-                    <strong>Listed ingredients: </strong>
+                    <strong>Ingredients named on the menu: </strong>
 
-                    {ingredients.join(', ') ||
-                      (
-                        dish.extractionStatus === 'pending'
-                          ? 'Reading ingredients…'
-                          : dish.extractionStatus === 'needs_review'
-                            ? 'Not confirmed; extraction is incomplete.'
-                            : 'Not listed on the menu.'
-                      )}
+                    {ingredients.join(', ') || 'No ingredient names identified in the listed text.'}
                   </p>
 
                   <p
                     className={
                       matching.hasConflict
                         ? 'error'
-                        : matching.recommended
+                        : matching.localCandidate
                           ? 'menu-no-conflict'
                           : ''
                     }
                   >
                     <strong>{label}</strong>
                   </p>
-
-                  {matching.assessed && (
-                    <p className="muted">
-                      Gemini reviewed the available menu
-                      evidence. Complete ingredients, sourcing,
-                      and cross-contact remain unknown.
-                    </p>
-                  )}
 
                   {conflicts.map((item, index) => (
                     <p
@@ -330,30 +303,14 @@ export default function Food() {
 
                   {!matching.hasConflict && (
                     <p>
-                      {matching.assessed
-                        ? matching.recommendationReason || 'Confirm ingredients, preparation, sourcing, and cross-contact with the restaurant before choosing.'
-                        : 'Dietary compatibility is unconfirmed. Ask about ingredients, sourcing, and cross-contact.'}
+                      {matching.recommendationReason ||
+                        'Confirm ingredients, preparation, sourcing, and cross-contact with the restaurant before choosing.'}
                     </p>
                   )}
                 </article>
               )
             })}
           </div>
-
-          {full.reviewError && (
-            <Notice>
-              Some dietary checks could not finish.
-              {' '}
-              <button
-                type="button"
-                className="button secondary"
-                disabled={full.reviewing}
-                onClick={full.retryReview}
-              >
-                Continue dietary checks
-              </button>
-            </Notice>
-          )}
 
           {full.menu.coverageVerified !== true && (
             <Notice>
@@ -365,7 +322,7 @@ export default function Food() {
           )}
 
           <Notice>
-            AI checks can miss ingredients. Confirm ingredients,
+            Local text checks can miss ingredients and do not cover complete recipes or personal notes. Confirm ingredients,
             preparation, sourcing, and cross-contact with the
             restaurant. These results are not allergy-safety
             guarantees or religious certifications.

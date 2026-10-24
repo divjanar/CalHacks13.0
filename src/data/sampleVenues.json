@@ -47,7 +47,8 @@
       }
     },
     "menuUrl": "https://images.getbento.com/accounts/03e46b0a490c9d081e19b5a7b69f759d/media/KcqVzvRSd6g4GweRWNA9_Makai_Main%20Food%20Menu%20April%202026.pdf",
-    "websiteUri": "https://www.makaisantacruz.com/"
+    "websiteUri": "https://www.makaisantacruz.com/",
+    "menuFormat": "three-column-pdf"
   },
   {
     "id": "ChIJrSzz8JlBjoAR4EwBj-WBV4E",

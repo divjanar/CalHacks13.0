@@ -2,6 +2,7 @@ FROM node:22-bookworm
 
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV MENU_READER=local
 
 WORKDIR /app/server
 
@@ -16,6 +17,7 @@ COPY --chown=node:node server/ /app/server/
 
 # The menu readers import ../src/data/sampleVenues.json.
 COPY --chown=node:node src/data/ /app/src/data/
+COPY --chown=node:node package.json /app/package.json
 
 RUN chown -R node:node /app/server
 

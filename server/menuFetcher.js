@@ -82,6 +82,18 @@ async function fetchMenuText(venueId) {
   if (!response?.ok) {
     await response?.body?.cancel();
 
+    if (response?.status === 403 && venue.id === 'ChIJrSzz8JlBjoAR4EwBj-WBV4E') {
+      const saved = require('./menuSnapshots/pretty-good-advice.json');
+      const { menuItem } = require('./menuFormats');
+      return {
+        venueId: venue.id, sourceUrl: saved.sourceUrl, fetchedAt: saved.recordedOn,
+        sourceNotice: saved.notice, sourceType: 'saved_official_listing',
+        inventoryComplete: false, truncated: false,
+        text: saved.items.map(([name, price]) => `${name}\n$${price}`).join('\n'),
+        items: saved.items.map(([name, price]) => ({ ...menuItem(venue, name, '', '$' + price), ingredientsUnavailable: true })),
+      };
+    }
+
     throw new Error(
       `Menu download failed: HTTP ${
         response?.status || "unknown"
@@ -302,7 +314,7 @@ async function fetchRenderedMenu(venue, sourceUrl) {
       if (fullText.length < 100) {
         throw new Error(
           "Neither HTML parsing nor browser-visible text " +
-          "provided enough readable menu content."
+          "provided enough readable menu content.", { cause: error }
         );
       }
 
@@ -332,7 +344,7 @@ async function fetchRenderedMenu(venue, sourceUrl) {
     if (error.name === "TimeoutError") {
       throw new Error(
         `${venue.displayName.text}'s menu did not ` +
-        "become readable in time."
+        "become readable in time.", { cause: error }
       );
     }
 
@@ -356,6 +368,21 @@ function parseMenuHtml(html, venue, sourceUrl) {
   const seen = new Set();
   const sourceCardCount = $(".food-item-holder").length;
   let inventoriedCards = 0;
+
+  // The official Ghirardelli location page publishes names in carousel captions.
+  // Prices and recipes are absent, so do not manufacture either from the photos.
+  if (new URL(sourceUrl).hostname === 'www.ghirardelli.com') {
+    const { menuItem } = require('./menuFormats');
+    $('.ls-carousel-menu__title').each((_, element) => {
+      const name = clean($(element).text());
+      let parent = $(element).parent();
+      while (parent.length && !parent.find('h2').length) parent = parent.parent();
+      const section = clean(parent.find('h2').first().text());
+      if (!name || /gift/i.test(section) || seen.has(name)) return;
+      seen.add(name);
+      items.push(menuItem(venue, name, '', '', section));
+    });
+  }
 
   $(".food-item-holder").each((_, element) => {
     const card = $(element);
@@ -479,7 +506,7 @@ function parseMenuHtml(html, venue, sourceUrl) {
     venueId: venue.id,
     items,
     inventoryComplete:
-      items.length > 0 &&
+      sourceCardCount > 0 && items.length > 0 &&
       inventoriedCards === sourceCardCount,
     sourceCardCount,
     restaurant: venue.displayName.text,

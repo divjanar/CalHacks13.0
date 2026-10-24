@@ -8,7 +8,7 @@ import { useApp } from '../state/context'
 import { isUniversityEmail } from '../data/universityEmail'
 
 const API_URL =
-  import.meta.env.VITE_API_URL || 'http://localhost:3001'
+  import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://table8-api.onrender.com' : 'http://localhost:3001')
 
 export default function Verify() {
   const { state, update } = useApp()

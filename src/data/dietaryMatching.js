@@ -9,7 +9,7 @@ const patterns = {
   fish: /\b(fish|salmon|tuna|cod|anchovies|trout|halibut|tilapia)\b/,
   seafood: /\bseafood\b/,
   shellfish: /\b(shrimp|prawns?|crab|lobster|clams?|mussels?|oysters?|scallops?|calamari|squid|octopus)\b/,
-  dairy: /\b(milk|buttermilk|cheese|cheddar|monterey jack|parmesan|mozzarella|feta|yogurt|butter|ghee|cream|whey|casein)\b/,
+  dairy: /\b(milk|buttermilk|cheese|ricotta|parmigiano|stracchino|manchego|fontina|cheddar|monterey jack|parmesan|mozzarella|feta|yogurt|butter|ghee|cream|whey|casein)\b/,
   eggs: /\b(eggs?|omelettes?|omelets?|mayonnaise|mayo|hollandaise)\b/,
   honey: /\bhoney\b/, alcohol: /\b(wine|beer|bourbon|rum|vodka|whiskey|sake|sherry|alcohol)\b/,
   onion: /\bonions?\b/, garlic: /\bgarlic\b/, potato: /\b(potatoes|potato|fries|hash browns?)\b/,
@@ -31,6 +31,9 @@ function dairyText(text) {
 }
 export function matchDietaryNeeds(dish, preferences = {}) {
   const text = normalize([dish.name, dish.description, ...(dish.listedIngredients || [])].join(' '))
+    .replace(/\b(?:no|without|free from) (?:milk|cheese|butter|cream|eggs?|peanuts?|wheat|soy|sesame)\b/g, '')
+    .replace(/\b(?:milk|dairy|egg|peanut|wheat|soy|sesame)[- ]free\b/g, '')
+    .replace(/\b(?:vegan|plant-based|meatless) (?:beef|bacon|ham|chicken|pork)\b/g, '')
   const detected = new Map()
   for (const [group, pattern] of Object.entries(patterns)) {
     const match = (group === 'dairy' ? dairyText(text) : text).match(pattern)
@@ -41,7 +44,7 @@ export function matchDietaryNeeds(dish, preferences = {}) {
   for (const rule of preset?.incompatibleGroups || []) {
     if (detected.has(rule.with) && rule.anyOf.some(group => detected.has(group))) dietConflicts.push({ group: rule.label, evidence: 'Menu mentions both meat and dairy.' })
   }
-  const mapped = { Milk: 'dairy', Eggs: 'eggs', Fish: 'fish', Shellfish: 'shellfish' }
+  const mapped = { Milk: 'dairy', Dairy: 'dairy', Eggs: 'eggs', Fish: 'fish', Shellfish: 'shellfish' }
   const allergyConflicts = []
   for (const allergen of preferences.allergies || []) {
     const evidence = [

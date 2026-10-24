@@ -1,9 +1,9 @@
 const API_URL = (
-  import.meta.env.VITE_API_URL || 'http://localhost:3001'
+  import.meta.env.VITE_API_URL || (import.meta.env.PROD ? 'https://table8-api.onrender.com' : 'http://localhost:3001')
 ).replace(/\/$/, '')
 
 const TTL = 24 * 60 * 60 * 1000
-const STORAGE = 'table8-extracted-menu-v8'
+const STORAGE = 'table8-local-menu-v2'
 const tasks = new Map()
 
 function normalizeMode(mode) {
@@ -84,7 +84,7 @@ export function extractionKey(dinner, requestedMode) {
   const mode = normalizeMode(requestedMode)
 
   return JSON.stringify([
-    'menu-v8',
+    'local-menu-v2',
     API_URL,
     dinner.venueId,
     dinner.menuUrl || '',

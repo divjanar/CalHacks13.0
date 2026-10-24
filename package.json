@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test:smoke": "node scripts/smoke.mjs",
+    "test:menu": "node --test scripts/local-menu.test.mjs",
     "test:browser": "node scripts/browser-check.mjs",
     "test:animations": "node scripts/animation-check.mjs",
     "test:area": "node scripts/area-check.mjs",
