@@ -24,7 +24,7 @@ export async function request(path, body) {
           body: JSON.stringify(body),
         }
       : {}),
-    signal: AbortSignal.timeout(20000),
+    signal: AbortSignal.timeout(90000),
   })
 
   let data
