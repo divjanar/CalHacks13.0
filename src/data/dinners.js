@@ -1,7 +1,7 @@
 import venues from './sampleVenues.json'
 
 // Venue details are a Google Places snapshot.
-// Events and seat counts are fictional.
+// These events are fictional. Live seat counts come from Convex.
 const dinnerEvents = [
   {
     id: 'midweek',
@@ -50,22 +50,6 @@ const dinnerEvents = [
     minPrice: 10,
     maxPrice: 20,
     seats: 2,
-  },
-  {
-    id: 'ghirardelli',
-    venueId: 'ChIJvXl2weCAhYARjSxnhzrBfNc',
-    title: 'Sweet beginnings by the bay',
-    date: '2026-10-22',
-    time: '6:00 PM',
-    endTime: '7:30 PM',
-    shortDay: 'Thursday, Oct 22',
-    day: 'Thursday, October 22',
-    area: 'San Francisco',
-    cuisine: 'Chocolate & dessert',
-    price: 'Price not provided',
-    minPrice: null,
-    maxPrice: null,
-    seats: 4,
   },
   {
     id: 'arsicault',
