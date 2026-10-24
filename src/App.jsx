@@ -27,7 +27,7 @@ import './App.css'
 
 const routes = {
   home: [Home, 'Good company starts here'],
-  discover: [Discover, 'Discover dinners'],
+  discover: [Discover, 'Explore'],
   dinner: [Details, 'Dinner details'],
   settings: [UserSettings, 'User settings'],
   'user-preferences': [UserPreferences, 'User preferences'],
@@ -38,7 +38,7 @@ const routes = {
   consent: [Consent, 'Community agreement'],
   confirmation: [RequestReceived, 'Request received'],
   'request-received': [RequestReceived, 'Request received'],
-  table: [MyTable, 'My table'],
+  table: [MyTable, 'My tables'],
   safety: [Safety, 'Trust & safety'],
   report: [Report, 'Report & support'],
   food: [Food, 'Food I can eat'],

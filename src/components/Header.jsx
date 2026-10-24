@@ -30,14 +30,14 @@ export default function Header({ home }) {
       >
         {state.signedIn && (
           <a href="#/discover">
-            {home ? 'Discover Dinners' : 'Discover dinners'}
+            Explore
           </a>
         )}
 
         {home ? (
           <a href="#how-it-works">How it Works</a>
         ) : state.signedIn ? (
-          <a href="#/table">My table</a>
+          <a href="#/table">My tables</a>
         ) : null}
 
         <a href="#/safety">
@@ -54,7 +54,7 @@ export default function Header({ home }) {
         {state.signedIn && (
           <>
             <a href="#/discover">Dinners</a>
-            <a href="#/table">My table</a>
+            <a href="#/table">My tables</a>
           </>
         )}
 

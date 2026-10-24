@@ -1,9 +1,12 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
+
 import Page from '../components/Page'
 import Button from '../components/Button'
 import Notice from '../components/Notice'
+import AreaMap from '../components/AreaMap'
+import { dinners } from '../data/dinners'
 import { useApp } from '../state/context'
 
 function formatWhen(timestamp, timeZone) {
@@ -18,7 +21,7 @@ function formatWhen(timestamp, timeZone) {
 }
 
 function formatPrice(dinner) {
-  const format = cents =>
+  const format = (cents) =>
     new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: dinner.currency,
@@ -29,10 +32,112 @@ function formatPrice(dinner) {
     dinner.minPriceCents != null &&
     dinner.maxPriceCents != null
   ) {
-    return `${format(dinner.minPriceCents)}–${format(dinner.maxPriceCents)}`
+    return (
+      `${format(dinner.minPriceCents)}–` +
+      `${format(dinner.maxPriceCents)}`
+    )
   }
 
   return 'Price not provided'
+}
+
+function RestaurantMap({ reservation }) {
+  const { restaurant, dinner } = reservation
+
+  const mapData = useMemo(() => {
+    const listing = dinners.find(
+      (item) => item.id === dinner.slug
+    )
+
+    // Prefer coordinates saved with the reservation's
+    // restaurant, otherwise use its matching dinner listing.
+    const hasSavedCoordinates =
+      Number.isFinite(restaurant.latitude) &&
+      Number.isFinite(restaurant.longitude)
+
+    const latitude = hasSavedCoordinates
+      ? restaurant.latitude
+      : listing?.latitude
+
+    const longitude = hasSavedCoordinates
+      ? restaurant.longitude
+      : listing?.longitude
+
+    if (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude)
+    ) {
+      return null
+    }
+
+    const searchUrl =
+      'https://www.google.com/maps/search/?api=1&query=' +
+      encodeURIComponent(
+        `${restaurant.name}, ${restaurant.address}`
+      )
+
+    return {
+      location: {
+        latitude,
+        longitude,
+        label: restaurant.name,
+      },
+      venues: [
+        {
+          ...listing,
+          id: dinner.slug,
+          restaurant: restaurant.name,
+          address: restaurant.address,
+          latitude,
+          longitude,
+          shortDay: formatWhen(
+            dinner.startsAt,
+            dinner.timeZone
+          ),
+          time: '',
+          googleMapsUri: searchUrl,
+        },
+      ],
+    }
+  }, [restaurant, dinner])
+
+  const directionsUrl =
+    'https://www.google.com/maps/dir/?api=1&destination=' +
+    encodeURIComponent(
+      `${restaurant.name}, ${restaurant.address}`
+    )
+
+  return (
+    <aside
+      className="my-table-map"
+      aria-label={`Location of ${restaurant.name}`}
+    >
+      {mapData ? (
+        <AreaMap
+          pins
+          location={mapData.location}
+          venues={mapData.venues}
+        />
+      ) : (
+        <section className="card">
+          <h2>{restaurant.name}</h2>
+          <p>{restaurant.address}</p>
+          <p className="muted">
+            Map coordinates are not available for this venue.
+          </p>
+        </section>
+      )}
+
+      <a
+        className="button secondary my-table-directions"
+        href={directionsUrl}
+        target="_blank"
+        rel="noreferrer"
+      >
+        Get directions ↗
+      </a>
+    </aside>
+  )
 }
 
 export default function MyTable() {
@@ -40,7 +145,9 @@ export default function MyTable() {
 
   const data = useQuery(
     api.reservations.listMine,
-    state.signedIn && !state.authLoading ? {} : 'skip'
+    state.signedIn && !state.authLoading
+      ? {}
+      : 'skip'
   )
 
   const cancel = useMutation(api.reservations.cancel)
@@ -83,7 +190,8 @@ export default function MyTable() {
       setMessage(
         typeof error?.data === 'string'
           ? error.data
-          : error.message || 'Unable to cancel your request.'
+          : error.message ||
+            'Unable to cancel your request.'
       )
     } finally {
       setCancelling(false)
@@ -101,7 +209,10 @@ export default function MyTable() {
         role="status"
         aria-label="Loading your reservations"
       >
-        <div className="account-spinner" aria-hidden="true" />
+        <div
+          className="account-spinner"
+          aria-hidden="true"
+        />
       </div>
     )
   }
@@ -109,7 +220,7 @@ export default function MyTable() {
   if (!state.signedIn) {
     return (
       <Page
-        eyebrow="MY TABLE"
+        eyebrow="MY TABLES"
         title="Sign in to see your table."
       >
         <Button to="#/signin">Sign in</Button>
@@ -121,7 +232,7 @@ export default function MyTable() {
 
   return (
     <Page
-      eyebrow="MY TABLE"
+      eyebrow="MY TABLES"
       title={
         reservations.length
           ? 'Your table, coming together.'
@@ -136,82 +247,92 @@ export default function MyTable() {
       {reservations.length === 0 ? (
         <section className="card booking-card">
           <h2>Find your next dinner</h2>
+
           <p>
             Choose a dinner and join a table.
             Your saved request will appear here.
           </p>
+
           <Button to="#/discover">
-            Discover dinners
+            Explore
           </Button>
         </section>
       ) : (
-        reservations.map(reservation => (
-          <section
-            className="card dinner-plan"
-            key={reservation._id}
-          >
-            <p className="eyebrow">
-              {reservation.status === 'pending'
-                ? 'SEAT REQUEST · PENDING'
-                : 'CONFIRMED'}
-            </p>
-
-            <h2>{reservation.dinner.title}</h2>
-
-            <p>{reservation.restaurant.name}</p>
-
-            <p>
-              {formatWhen(
-                reservation.dinner.startsAt,
-                reservation.dinner.timeZone
-              )}
-            </p>
-
-            <p>{reservation.restaurant.address}</p>
-
-            <p>
-              {formatPrice(reservation.dinner)} per person
-            </p>
-
-            <p>
-              {reservation.occupied} of{' '}
-              {reservation.dinner.capacity} sample seats held
-            </p>
-
-            <Notice>
-              Your request is saved to your account.
-              This is a sample event, not a restaurant booking.
-              Ingredients, preparation, and dietary accommodation
-              have not been confirmed with the restaurant.
-            </Notice>
-
-            <button
-              className="button"
-              type="button"
-              onClick={() => openFood(reservation.dinner)}
+        <div className="my-table-reservations">
+          {reservations.map((reservation) => (
+            <div
+              className="my-table-row"
+              key={reservation._id}
             >
-              See food I can eat
-            </button>
+              <section className="card dinner-plan">
+                <p className="eyebrow">
+                  {reservation.status === 'pending'
+                    ? 'SEAT REQUEST · PENDING'
+                    : 'CONFIRMED'}
+                </p>
 
-            <button
-              className="button secondary"
-              type="button"
-              aria-haspopup="dialog"
-              onClick={() => openCancellation(reservation)}
-            >
-              Cancel seat request
-            </button>
+                <h2>{reservation.dinner.title}</h2>
 
-            <Button to="#/report" secondary>
-              Report a concern
-            </Button>
-          </section>
-        ))
+                <p>{reservation.restaurant.name}</p>
+
+                <p>
+                  {formatWhen(
+                    reservation.dinner.startsAt,
+                    reservation.dinner.timeZone
+                  )}
+                </p>
+
+                <p>{reservation.restaurant.address}</p>
+
+                <p>
+                  {formatPrice(reservation.dinner)}
+                  {' '}per person
+                </p>
+
+                <p>
+                  {reservation.occupied} of{' '}
+                  {reservation.dinner.capacity}
+                  {' '}seats held
+                </p>
+
+                <div className="my-table-actions">
+                  <button
+                    className="button"
+                    type="button"
+                    onClick={() =>
+                      openFood(reservation.dinner)
+                    }
+                  >
+                    See food I can eat
+                  </button>
+
+                  <button
+                    className="button secondary"
+                    type="button"
+                    aria-haspopup="dialog"
+                    onClick={() =>
+                      openCancellation(reservation)
+                    }
+                  >
+                    Cancel seat request
+                  </button>
+
+                  <Button to="#/report" secondary>
+                    Report a concern
+                  </Button>
+                </div>
+              </section>
+
+              <RestaurantMap reservation={reservation} />
+            </div>
+          ))}
+        </div>
       )}
 
       {data?.hasMore && (
         <Notice>
-          Showing your latest 20 pending and 20 confirmed requests.
+          Showing your latest 20 pending and 20
+          confirmed requests.
         </Notice>
       )}
 
@@ -220,7 +341,7 @@ export default function MyTable() {
         className="cancel-seat-dialog"
         aria-labelledby="cancel-seat-title"
         aria-describedby="cancel-seat-description"
-        onCancel={event => {
+        onCancel={(event) => {
           if (cancelling) event.preventDefault()
         }}
       >
@@ -246,7 +367,9 @@ export default function MyTable() {
             disabled={cancelling}
             onClick={confirmCancellation}
           >
-            {cancelling ? 'Cancelling…' : 'Yes, cancel request'}
+            {cancelling
+              ? 'Cancelling…'
+              : 'Yes, cancel request'}
           </button>
 
           <button
@@ -254,7 +377,9 @@ export default function MyTable() {
             type="button"
             disabled={cancelling}
             autoFocus
-            onClick={() => cancelDialog.current?.close()}
+            onClick={() =>
+              cancelDialog.current?.close()
+            }
           >
             Keep my request
           </button>

@@ -1,65 +1,381 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import { resolveLocalArea, suggestAreas } from '../services/areaSuggestions'
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from 'react'
 
-export default function LocationInput({ label, value, onChange, onCommit, name = 'localArea', type = 'text', required = false }) {
+import { searchAreas } from '../services/areaSearch'
+
+export default function LocationInput({
+  label,
+  value = '',
+  onChange,
+  onCommit,
+  name = 'localArea',
+  type = 'text',
+  required = false,
+}) {
   const id = useId()
+  const inputValue = String(value || '')
+
   const activeChoice = useRef(null)
+  const lastCommitted = useRef(null)
+
   const [completion, setCompletion] = useState('')
-  useEffect(() => () => activeChoice.current?.abort(), [])
   const [focused, setFocused] = useState(false)
   const [edited, setEdited] = useState(false)
   const [selected, setSelected] = useState(0)
-  const [result, setResult] = useState({ query: '', items: [], error: '' })
-  const eligible = focused && edited && value.trim().length >= 2
-  const options = eligible && result.query === value ? result.items : []
-  const loading = eligible && result.query !== value
+
+  const [result, setResult] = useState({
+    query: '',
+    items: [],
+    error: '',
+  })
+
+  const eligible =
+    focused &&
+    edited &&
+    inputValue.trim().length >= 2
+
+  const options =
+    eligible && result.query === inputValue
+      ? result.items
+      : []
+
+  const loading =
+    eligible && result.query !== inputValue
+
+  useEffect(() => {
+    return () => {
+      activeChoice.current?.abort('cancelled')
+      activeChoice.current = null
+    }
+  }, [])
+
   useEffect(() => {
     if (!eligible) return
+
     const controller = new AbortController()
     let timeout
     let disposed = false
-    const debounce = setTimeout(() => {
-      timeout = setTimeout(() => controller.abort(), 8000)
-      suggestAreas(value.trim(), controller.signal).then(items => {
-        if (!controller.signal.aborted) setResult({ query: value, items, error: '' })
-      }).catch(() => {
-        if (!disposed) setResult({ query: value, items: [], error: 'Suggestions could not load. You can still type your area.' })
-      }).finally(() => clearTimeout(timeout))
+
+    const debounce = setTimeout(async () => {
+      timeout = setTimeout(
+        () => controller.abort('timeout'),
+        10000
+      )
+
+      try {
+        const locations = await searchAreas(
+          inputValue.trim(),
+          controller.signal
+        )
+
+        if (
+          disposed ||
+          controller.signal.aborted
+        ) {
+          return
+        }
+
+        setResult({
+          query: inputValue,
+          items: locations,
+          error: '',
+        })
+      } catch {
+        if (disposed) return
+
+        setResult({
+          query: inputValue,
+          items: [],
+          error: controller.signal.aborted
+            ? 'Suggestions timed out. Press Enter to retry.'
+            : 'Location suggestions could not load. Press Enter to retry your area search.',
+        })
+      } finally {
+        clearTimeout(timeout)
+      }
     }, 350)
-    return () => { disposed = true; clearTimeout(debounce); clearTimeout(timeout); controller.abort() }
-  }, [value, eligible])
+
+    return () => {
+      disposed = true
+      clearTimeout(debounce)
+      clearTimeout(timeout)
+      controller.abort('cancelled')
+    }
+  }, [inputValue, eligible])
+
   async function complete(text, option) {
-    activeChoice.current?.abort()
+    const query = text.trim()
+
+    // Do not repeat an already completed selection.
+    if (
+      query &&
+      lastCommitted.current === query
+    ) {
+      setFocused(false)
+      setEdited(false)
+      return
+    }
+
+    activeChoice.current?.abort('cancelled')
+
     const controller = new AbortController()
     activeChoice.current = controller
-    setEdited(false); setFocused(false); setSelected(0)
-    if (!text.trim()) { onCommit?.(''); return }
-    setCompletion('Completing area...')
-    const timeout = setTimeout(() => controller.abort('timeout'), 10000)
+
+    setEdited(false)
+    setFocused(false)
+    setSelected(0)
+    setCompletion('')
+
+    setResult({
+      query: '',
+      items: [],
+      error: '',
+    })
+
+    if (!query) {
+      lastCommitted.current = null
+      activeChoice.current = null
+      onCommit?.('')
+      return
+    }
+
+    setCompletion('Finding your area…')
+
+    const timeout = setTimeout(
+      () => controller.abort('timeout'),
+      10000
+    )
+
     try {
-      const label = await resolveLocalArea(text, controller.signal, option)
-      if (controller.signal.aborted || activeChoice.current !== controller) return
-      onChange(label); onCommit?.(label); setCompletion('')
-    } catch (failure) {
-      if (activeChoice.current === controller && controller.signal.reason !== 'cancelled') setCompletion(controller.signal.aborted ? 'Area lookup timed out. Please try again.' : failure.message)
-    } finally { clearTimeout(timeout) }
+      const location =
+        option ||
+        (
+          await searchAreas(
+            query,
+            controller.signal
+          )
+        )[0]
+
+      if (
+        controller.signal.aborted ||
+        activeChoice.current !== controller
+      ) {
+        return
+      }
+
+      if (!location) {
+        setCompletion(
+          'Area not found. Add a US state or ZIP code and try again.'
+        )
+        return
+      }
+
+      lastCommitted.current = location.label
+
+      onChange(location.label)
+      onCommit?.(location.label)
+
+      setCompletion('')
+    } catch (error) {
+      if (
+        activeChoice.current !== controller ||
+        controller.signal.reason === 'cancelled'
+      ) {
+        return
+      }
+
+      setCompletion(
+        controller.signal.aborted
+          ? 'Area lookup timed out. Press Enter to retry.'
+          : error.message ||
+            'Area search could not load. Please try again.'
+      )
+    } finally {
+      clearTimeout(timeout)
+
+      if (activeChoice.current === controller) {
+        activeChoice.current = null
+      }
+    }
   }
-  function choose(option) { complete(option.label, option) }
+
+  function choose(option) {
+    complete(option.label, option)
+  }
+
   function keyboard(event) {
-    if (event.key === 'Escape') { setFocused(false); event.preventDefault(); event.stopPropagation() }
-    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && options.length) {
+    if (event.nativeEvent.isComposing) return
+
+    if (event.key === 'Escape') {
+      setFocused(false)
       event.preventDefault()
-      setSelected(index => (index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length)
+      event.stopPropagation()
+      return
     }
+
+    if (
+      (
+        event.key === 'ArrowDown' ||
+        event.key === 'ArrowUp'
+      ) &&
+      options.length
+    ) {
+      event.preventDefault()
+
+      setSelected((index) => {
+        const direction =
+          event.key === 'ArrowDown' ? 1 : -1
+
+        return (
+          index +
+          direction +
+          options.length
+        ) % options.length
+      })
+
+      return
+    }
+
     if (event.key === 'Enter') {
-      if (options.length) { event.preventDefault(); choose(options[Math.min(selected, options.length - 1)]) }
-      else { event.preventDefault(); complete(value) }
+      event.preventDefault()
+
+      if (options.length) {
+        const index = Math.min(
+          selected,
+          options.length - 1
+        )
+
+        choose(options[index])
+      } else {
+        complete(inputValue)
+      }
     }
   }
-  return <div className="location-combobox">
-    <label className="field" htmlFor={id}><span>{label}</span><input id={id} type={type} name={name} role="combobox" autoComplete="off" required={required} aria-describedby={`${id}-completion`} aria-autocomplete="list" aria-expanded={options.length > 0} aria-controls={`${id}-options`} aria-activedescendant={options.length ? `${id}-option-${Math.min(selected, options.length - 1)}` : undefined} value={value} placeholder="City, neighborhood or ZIP code" maxLength={180} onFocus={() => setFocused(true)} onChange={event => { activeChoice.current?.abort('cancelled'); setCompletion(''); setFocused(true); setEdited(true); setSelected(0); onChange(event.target.value) }} onBlur={() => complete(value, options[0])} onKeyDown={keyboard} /></label>
-    {completion && <small id={`${id}-completion`} role="status">{completion}</small>}
-    {options.length > 0 && <div className="location-suggestions"><ul role="listbox" id={`${id}-options`} aria-label="Suggested US areas">{options.map((option, index) => <li role="option" id={`${id}-option-${index}`} key={option.id} aria-selected={selected === index} onPointerDown={event => { event.preventDefault(); choose(option) }}>{option.label}</li>)}</ul><small><img src="https://maps.gstatic.com/mapfiles/api-3/images/powered-by-google-on-white3.png" alt="Powered by Google" width="120" height="14" /></small></div>}
-    {!options.length && <span className="sr-only" role="status">{loading ? 'Finding areas' : eligible && result.query === value ? result.error || 'No matching areas found' : ''}</span>}
-  </div>
+
+  const suggestionMessage =
+    eligible && result.query === inputValue
+      ? result.error ||
+        (
+          options.length
+            ? ''
+            : 'No matching areas found.'
+        )
+      : ''
+
+  return (
+    <div className="location-combobox">
+      <label className="field" htmlFor={id}>
+        <span>{label}</span>
+
+        <input
+          id={id}
+          type={type}
+          name={name}
+          role="combobox"
+          autoComplete="off"
+          required={required}
+          aria-describedby={`${id}-completion`}
+          aria-autocomplete="list"
+          aria-expanded={options.length > 0}
+          aria-controls={
+            options.length
+              ? `${id}-options`
+              : undefined
+          }
+          aria-activedescendant={
+            options.length
+              ? `${id}-option-${
+                  Math.min(
+                    selected,
+                    options.length - 1
+                  )
+                }`
+              : undefined
+          }
+          value={inputValue}
+          placeholder="City, neighborhood or ZIP code"
+          maxLength={180}
+          onFocus={() => setFocused(true)}
+          onChange={(event) => {
+            activeChoice.current?.abort('cancelled')
+            activeChoice.current = null
+            lastCommitted.current = null
+
+            setCompletion('')
+            setFocused(true)
+            setEdited(true)
+            setSelected(0)
+
+            onChange(event.target.value)
+          }}
+          onBlur={() => {
+            setFocused(false)
+
+            // Avoid starting a second lookup when Enter
+            // or a suggestion already started one.
+            if (!activeChoice.current && edited) {
+              complete(inputValue)
+            }
+          }}
+          onKeyDown={keyboard}
+        />
+      </label>
+
+      <small
+        id={`${id}-completion`}
+        role="status"
+      >
+        {completion ||
+          (
+            loading
+              ? 'Finding areas…'
+              : suggestionMessage
+          )}
+      </small>
+
+      {options.length > 0 && (
+        <div className="location-suggestions">
+          <ul
+            role="listbox"
+            id={`${id}-options`}
+            aria-label="Suggested US areas"
+          >
+            {options.map((option, index) => (
+              <li
+                role="option"
+                id={`${id}-option-${index}`}
+                key={
+                  `${option.latitude}:` +
+                  `${option.longitude}:${index}`
+                }
+                aria-selected={selected === index}
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  choose(option)
+                }}
+              >
+                {option.label}
+              </li>
+            ))}
+          </ul>
+
+          <small>
+            Location data ©{' '}
+            <a
+              href="https://www.openstreetmap.org/copyright"
+              target="_blank"
+              rel="noreferrer"
+            >
+              OpenStreetMap contributors
+            </a>
+            {' · '}Search by Photon
+          </small>
+        </div>
+      )}
+    </div>
+  )
 }

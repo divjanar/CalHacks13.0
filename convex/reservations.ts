@@ -2,40 +2,138 @@ import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { api } from "./_generated/api";
 import { requireVerifiedSetup } from "./verification";
-import type { MutationCtx, QueryCtx } from "./_generated/server";
+
+import type {
+  MutationCtx,
+  QueryCtx,
+} from "./_generated/server";
+
 import type { Id } from "./_generated/dataModel";
 
 type DatabaseContext = QueryCtx | MutationCtx;
+
+const CONFIRMATION_THRESHOLD = 6;
+const TABLE_CAPACITY = 8;
+
+async function getActiveReservations(
+  ctx: DatabaseContext,
+  dinnerId: Id<"dinners">
+) {
+  const pending = await ctx.db
+    .query("reservations")
+    .withIndex("by_dinnerId_and_status", (q) =>
+      q
+        .eq("dinnerId", dinnerId)
+        .eq("status", "pending")
+    )
+    .take(TABLE_CAPACITY + 1);
+
+  const confirmed = await ctx.db
+    .query("reservations")
+    .withIndex("by_dinnerId_and_status", (q) =>
+      q
+        .eq("dinnerId", dinnerId)
+        .eq("status", "confirmed")
+    )
+    .take(TABLE_CAPACITY + 1);
+
+  return [...pending, ...confirmed];
+}
 
 async function countOccupied(
   ctx: DatabaseContext,
   dinnerId: Id<"dinners">
 ) {
-  // Tables have a maximum of eight active seats.
-  // Reading nine per status also detects excess occupancy.
-  const pending = await ctx.db
-    .query("reservations")
-    .withIndex("by_dinnerId_and_status", q =>
-      q.eq("dinnerId", dinnerId).eq("status", "pending")
-    )
-    .take(9);
+  const reservations = await getActiveReservations(
+    ctx,
+    dinnerId
+  );
 
-  const confirmed = await ctx.db
-    .query("reservations")
-    .withIndex("by_dinnerId_and_status", q =>
-      q.eq("dinnerId", dinnerId).eq("status", "confirmed")
-    )
-    .take(9);
+  return reservations.length;
+}
 
-  return pending.length + confirmed.length;
+// Call after a join or cancellation, inside the same mutation.
+async function synchronizeTable(
+  ctx: MutationCtx,
+  dinnerId: Id<"dinners">
+) {
+  const dinner = await ctx.db.get(
+    "dinners",
+    dinnerId
+  );
+
+  if (!dinner) return;
+
+  // Do not change reservations for a closed event.
+  if (
+    dinner.status === "cancelled" ||
+    dinner.status === "completed"
+  ) {
+    return;
+  }
+
+  const active = await getActiveReservations(
+    ctx,
+    dinnerId
+  );
+
+  if (
+    dinner.capacity !== TABLE_CAPACITY ||
+    active.length > TABLE_CAPACITY
+  ) {
+    throw new ConvexError(
+      "This table's capacity needs administrator review."
+    );
+  }
+
+  const reservationStatus =
+    active.length >= CONFIRMATION_THRESHOLD
+      ? "confirmed"
+      : "pending";
+
+  const now = Date.now();
+
+  for (const reservation of active) {
+    if (reservation.status === reservationStatus) {
+      continue;
+    }
+
+    await ctx.db.patch(
+      "reservations",
+      reservation._id,
+      {
+        status: reservationStatus,
+        updatedAt: now,
+      }
+    );
+  }
+
+  // A confirmed group can still accept seats seven and eight.
+  const dinnerStatus =
+    active.length >= dinner.capacity
+      ? "full"
+      : "open";
+
+  if (dinner.status !== dinnerStatus) {
+    await ctx.db.patch(
+      "dinners",
+      dinnerId,
+      {
+        status: dinnerStatus,
+      }
+    );
+  }
 }
 
 export const getDinner = query({
-  args: { slug: v.string() },
+  args: {
+    slug: v.string(),
+  },
+
   handler: async (ctx, args) => {
     const dinner = await ctx.db
       .query("dinners")
-      .withIndex("by_slug", q =>
+      .withIndex("by_slug", (q) =>
         q.eq("slug", args.slug)
       )
       .unique();
@@ -49,27 +147,36 @@ export const getDinner = query({
 
     if (!restaurant) return null;
 
-    const occupied = await countOccupied(ctx, dinner._id);
+    const occupied = await countOccupied(
+      ctx,
+      dinner._id
+    );
 
     let myReservation = null;
 
-    const identity = await ctx.auth.getUserIdentity();
+    const identity =
+      await ctx.auth.getUserIdentity();
 
     if (identity) {
       const profile = await ctx.db
         .query("profiles")
-        .withIndex("by_tokenIdentifier", q =>
-          q.eq("tokenIdentifier", identity.tokenIdentifier)
+        .withIndex("by_tokenIdentifier", (q) =>
+          q.eq(
+            "tokenIdentifier",
+            identity.tokenIdentifier
+          )
         )
         .unique();
 
       if (profile) {
         const reservation = await ctx.db
           .query("reservations")
-          .withIndex("by_profileId_and_dinnerId", q =>
-            q
-              .eq("profileId", profile._id)
-              .eq("dinnerId", dinner._id)
+          .withIndex(
+            "by_profileId_and_dinnerId",
+            (q) =>
+              q
+                .eq("profileId", profile._id)
+                .eq("dinnerId", dinner._id)
           )
           .unique();
 
@@ -99,7 +206,10 @@ export const getDinner = query({
 });
 
 export const join = mutation({
-  args: { slug: v.string() },
+  args: {
+    slug: v.string(),
+  },
+
   handler: async (ctx, args) => {
     await requireVerifiedSetup(ctx);
 
@@ -117,9 +227,11 @@ export const join = mutation({
       );
     }
 
+    const profileId = account.profile._id;
+
     const dinner = await ctx.db
       .query("dinners")
-      .withIndex("by_slug", q =>
+      .withIndex("by_slug", (q) =>
         q.eq("slug", args.slug)
       )
       .unique();
@@ -130,7 +242,7 @@ export const join = mutation({
       );
     }
 
-    // Current identity checks support prototype testing only.
+    // Preserve the existing prototype restriction.
     if (!dinner.isSample) {
       throw new ConvexError(
         "Real dinner reservations are not enabled yet."
@@ -139,15 +251,21 @@ export const join = mutation({
 
     const existing = await ctx.db
       .query("reservations")
-      .withIndex("by_profileId_and_dinnerId", q =>
-        q
-          .eq("profileId", account.profile!._id)
-          .eq("dinnerId", dinner._id)
+      .withIndex(
+        "by_profileId_and_dinnerId",
+        (q) =>
+          q
+            .eq("profileId", profileId)
+            .eq("dinnerId", dinner._id)
       )
       .unique();
 
-    // Repeated clicks return the existing request.
-    if (existing && existing.status !== "cancelled") {
+    // Repeated clicks do not create another seat.
+    if (
+      existing &&
+      existing.status !== "cancelled"
+    ) {
+      await synchronizeTable(ctx, dinner._id);
       return existing._id;
     }
 
@@ -157,21 +275,26 @@ export const join = mutation({
       );
     }
 
-    if (dinner.capacity !== 8) {
+    if (dinner.capacity !== TABLE_CAPACITY) {
       throw new ConvexError(
         "This table's capacity needs administrator review."
       );
     }
 
-    const occupied = await countOccupied(ctx, dinner._id);
+    const occupied = await countOccupied(
+      ctx,
+      dinner._id
+    );
 
     if (occupied >= dinner.capacity) {
-      throw new ConvexError("This table is full.");
+      throw new ConvexError(
+        "This table is full."
+      );
     }
 
     const now = Date.now();
 
-    let reservationId;
+    let reservationId: Id<"reservations">;
 
     if (existing) {
       reservationId = existing._id;
@@ -188,7 +311,7 @@ export const join = mutation({
       reservationId = await ctx.db.insert(
         "reservations",
         {
-          profileId: account.profile._id,
+          profileId,
           dinnerId: dinner._id,
           status: "pending",
           createdAt: now,
@@ -197,13 +320,9 @@ export const join = mutation({
       );
     }
 
-    if (occupied + 1 >= dinner.capacity) {
-      await ctx.db.patch(
-        "dinners",
-        dinner._id,
-        { status: "full" }
-      );
-    }
+    // Includes the seat just saved.
+    // At six seats, every active reservation is confirmed.
+    await synchronizeTable(ctx, dinner._id);
 
     return reservationId;
   },
@@ -211,36 +330,51 @@ export const join = mutation({
 
 export const listMine = query({
   args: {},
-  handler: async ctx => {
-    const identity = await ctx.auth.getUserIdentity();
+
+  handler: async (ctx) => {
+    const identity =
+      await ctx.auth.getUserIdentity();
 
     if (!identity) {
-      return { reservations: [], hasMore: false };
+      return {
+        reservations: [],
+        hasMore: false,
+      };
     }
 
     const profile = await ctx.db
       .query("profiles")
-      .withIndex("by_tokenIdentifier", q =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq(
+          "tokenIdentifier",
+          identity.tokenIdentifier
+        )
       )
       .unique();
 
     if (!profile) {
-      return { reservations: [], hasMore: false };
+      return {
+        reservations: [],
+        hasMore: false,
+      };
     }
 
     const pending = await ctx.db
       .query("reservations")
-      .withIndex("by_profileId_and_status", q =>
-        q.eq("profileId", profile._id).eq("status", "pending")
+      .withIndex("by_profileId_and_status", (q) =>
+        q
+          .eq("profileId", profile._id)
+          .eq("status", "pending")
       )
       .order("desc")
       .take(21);
 
     const confirmed = await ctx.db
       .query("reservations")
-      .withIndex("by_profileId_and_status", q =>
-        q.eq("profileId", profile._id).eq("status", "confirmed")
+      .withIndex("by_profileId_and_status", (q) =>
+        q
+          .eq("profileId", profile._id)
+          .eq("status", "confirmed")
       )
       .order("desc")
       .take(21);
@@ -248,7 +382,9 @@ export const listMine = query({
     const selected = [
       ...pending.slice(0, 20),
       ...confirmed.slice(0, 20),
-    ].sort((a, b) => b.updatedAt - a.updatedAt);
+    ].sort(
+      (a, b) => b.updatedAt - a.updatedAt
+    );
 
     const reservations = [];
 
@@ -271,13 +407,18 @@ export const listMine = query({
         ...reservation,
         dinner,
         restaurant,
-        occupied: await countOccupied(ctx, dinner._id),
+        occupied: await countOccupied(
+          ctx,
+          dinner._id
+        ),
       });
     }
 
     return {
       reservations,
-      hasMore: pending.length > 20 || confirmed.length > 20,
+      hasMore:
+        pending.length > 20 ||
+        confirmed.length > 20,
     };
   },
 });
@@ -286,17 +427,24 @@ export const cancel = mutation({
   args: {
     reservationId: v.id("reservations"),
   },
+
   handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
+    const identity =
+      await ctx.auth.getUserIdentity();
 
     if (!identity) {
-      throw new ConvexError("Please sign in first.");
+      throw new ConvexError(
+        "Please sign in first."
+      );
     }
 
     const profile = await ctx.db
       .query("profiles")
-      .withIndex("by_tokenIdentifier", q =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq(
+          "tokenIdentifier",
+          identity.tokenIdentifier
+        )
       )
       .unique();
 
@@ -310,10 +458,14 @@ export const cancel = mutation({
       !reservation ||
       reservation.profileId !== profile._id
     ) {
-      throw new ConvexError("Reservation not found.");
+      throw new ConvexError(
+        "Reservation not found."
+      );
     }
 
-    if (reservation.status === "cancelled") return null;
+    if (reservation.status === "cancelled") {
+      return null;
+    }
 
     await ctx.db.patch(
       "reservations",
@@ -324,22 +476,11 @@ export const cancel = mutation({
       }
     );
 
-    const dinner = await ctx.db.get(
-      "dinners",
+    // Recalculate occupancy and confirmation after cancellation.
+    await synchronizeTable(
+      ctx,
       reservation.dinnerId
     );
-
-    if (dinner?.status === "full") {
-      const occupied = await countOccupied(ctx, dinner._id);
-
-      if (occupied < dinner.capacity) {
-        await ctx.db.patch(
-          "dinners",
-          dinner._id,
-          { status: "open" }
-        );
-      }
-    }
 
     return null;
   },

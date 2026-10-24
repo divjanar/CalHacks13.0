@@ -10,8 +10,8 @@ export default function BookingSummary({ confirmed = false }) {
     <h2>{dinner.title}</h2>
     <p>{dinner.day} · {dinner.time}–{dinner.endTime}<br />{dinner.area} · Sample venue: {dinner.restaurant}<br />{dinner.price} per person · Pay the restaurant</p>
     <Notice>{confirmed ? 'Demo approval · All eight diners accommodated. This is a simulated confirmed booking.' : 'Sample booking request · Pending dietary confirmation for all eight diners. No real seat has been reserved.'}</Notice>
-    <Button to="#/table">Meet my table →</Button>
+    <Button to="#/table">Meet my tables →</Button>
     <Button to="#/discover" secondary>Back to dinners</Button>
-    <small>Need to cancel? You can review cancellation options from My table.</small>
+    <small>Need to cancel? You can review cancellation options from My tables.</small>
   </section>
 }

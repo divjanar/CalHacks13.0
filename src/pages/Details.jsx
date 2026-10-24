@@ -191,7 +191,7 @@ export default function Details() {
             {saving
               ? 'Saving seat request…'
               : alreadyJoined
-                ? 'View my table →'
+                ? 'View my tables →'
                 : state.signedIn && !state.onboardingComplete
                   ? 'Complete setup to join →'
                   : unavailable
