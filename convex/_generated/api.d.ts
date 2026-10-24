@@ -12,6 +12,7 @@ import type * as accounts from "../accounts.js";
 import type * as dinnerSeed from "../dinnerSeed.js";
 import type * as http from "../http.js";
 import type * as reservations from "../reservations.js";
+import type * as testing from "../testing.js";
 import type * as verification from "../verification.js";
 
 import type {
@@ -25,6 +26,7 @@ declare const fullApi: ApiFromModules<{
   dinnerSeed: typeof dinnerSeed;
   http: typeof http;
   reservations: typeof reservations;
+  testing: typeof testing;
   verification: typeof verification;
 }>;
 

@@ -80,6 +80,8 @@ export default defineSchema({
 
     // Reservation mutations must enforce capacity.
     capacity: v.number(),
+    // Once the group reaches six seats, confirmation is permanent.
+    confirmedAt: v.optional(v.number()),
 
     // Store money as integer cents.
     minPriceCents: v.optional(v.number()),

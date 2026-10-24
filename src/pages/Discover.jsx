@@ -54,8 +54,7 @@ function DinnerCard({
       ? 'Loading available seats…'
       : live === null
         ? 'Dinner setup is not available yet.'
-        : `${live.availableSeats} seats available · ` +
-          `${live.capacity} people total`
+        : `${live.availableSeats} seats available`
 
   return (
     <article

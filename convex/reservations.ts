@@ -86,12 +86,19 @@ async function synchronizeTable(
     );
   }
 
+  const confirmed = dinner.confirmedAt !== undefined ||
+    active.length >= CONFIRMATION_THRESHOLD ||
+    active.some(reservation => reservation.status === "confirmed");
   const reservationStatus =
-    active.length >= CONFIRMATION_THRESHOLD
+    confirmed
       ? "confirmed"
       : "pending";
 
   const now = Date.now();
+
+  if (confirmed && dinner.confirmedAt === undefined) {
+    await ctx.db.patch("dinners", dinnerId, { confirmedAt: now });
+  }
 
   for (const reservation of active) {
     if (reservation.status === reservationStatus) {
@@ -467,6 +474,15 @@ export const cancel = mutation({
       return null;
     }
 
+    // Preserve confirmation for existing tables before removing their last
+    // confirmed reservation. New tables already save this at six seats.
+    if (reservation.status === "confirmed") {
+      const dinner = await ctx.db.get("dinners", reservation.dinnerId);
+      if (dinner && dinner.confirmedAt === undefined) {
+        await ctx.db.patch("dinners", dinner._id, { confirmedAt: Date.now() });
+      }
+    }
+
     await ctx.db.patch(
       "reservations",
       reservation._id,
@@ -476,7 +492,7 @@ export const cancel = mutation({
       }
     );
 
-    // Recalculate occupancy and confirmation after cancellation.
+    // Update occupancy while preserving the table's confirmation.
     await synchronizeTable(
       ctx,
       reservation.dinnerId
