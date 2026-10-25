@@ -6,7 +6,6 @@ import Field from '../components/Field'
 import LocationInput from '../components/LocationInput'
 import Button from '../components/Button'
 import Notice from '../components/Notice'
-import { resolveLocalArea } from '../services/areaSuggestions'
 import { useApp } from '../state/context'
 
 export default function UserSettings() {
@@ -110,7 +109,8 @@ function ProfileForm({
     setSaving(true)
 
     try {
-      const area = await resolveLocalArea(localArea)
+      // Autocomplete is optional; saving typed text must not depend on a map API.
+      const area = localArea.trim()
 
       const preferred =
         preferredFirstName.trim() || legalName.firstName
@@ -227,6 +227,7 @@ function ProfileForm({
               clearMessage()
             }}
           />
+          <p className="field-hint">Suggestions are optional. You can type your city or local area and save it directly.</p>
 
           <Field
             label="University email"
