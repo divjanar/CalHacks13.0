@@ -2,9 +2,9 @@
 
 Keep the current menu reader and food page unchanged when updating hosting.
 
-The Docker image defaults to MENU_READER=gemini, using Render's existing
-GEMINI_API_KEY and model settings. Set MENU_READER=local on Render to switch
-back to key-free menu reading. Keep keys on the backend.
+The Docker image defaults to MENU_READER=local, preserving the working local
+reader without consuming Gemini quota. Render can explicitly override this with
+MENU_READER=gemini when desired. Keep the existing model and key variables.
 The image includes the root package.json so shared src/data ESM modules load
 correctly from the CommonJS backend. Never copy local .env or menu caches.
 

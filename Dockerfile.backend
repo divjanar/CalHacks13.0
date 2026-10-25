@@ -2,7 +2,7 @@ FROM node:22-bookworm
 
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-ENV MENU_READER=gemini
+ENV MENU_READER=local
 
 WORKDIR /app/server
 

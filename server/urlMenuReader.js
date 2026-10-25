@@ -290,10 +290,9 @@ async function fetchPdfText(venue) {
 
 async function readMenuUrl(
   venue,
-  { preview = true, onProgress = () => {} } = {}
+  { preview = true } = {}
 ) {
   const settings = menuSettings();
-  onProgress({ progress: { phase: 'fetching', reader: settings.reader, completed: 0, total: 0 } });
   if (!venue?.menuUrl) {
     throw new Error(
       "An official menu URL has not been configured."
@@ -319,17 +318,6 @@ async function readMenuUrl(
   }
   const { analyzeDishLocally } = await import("../src/data/localMenuAnalysis.js");
   const items = preview ? source.items.slice(0, 8) : source.items;
-  const resultFor = (dishes, complete) => ({
-    venueId: venue.id, restaurant: venue.displayName.text, address: venue.formattedAddress,
-    mode: preview ? 'preview' : 'full', sourceUrl: source.sourceUrl,
-    sourceType: source.sourceType || 'official_menu_text', sourceNotice: source.sourceNotice || '',
-    analysisMethod: settings.reader, fetchedAt: source.fetchedAt,
-    dishes: [...dishes], status: complete ? 'readable' : 'partial', intentionalPreview: preview,
-    coverageVerified: complete && !preview && Boolean(source.inventoryComplete),
-    validationNeedsReview: Boolean(source.truncated), sourceTruncated: Boolean(source.truncated),
-    coverage: { listed: items.length, extracted: dishes.length, failed: 0, remaining: items.length - dishes.length }, failedParts: [],
-  });
-  onProgress({ progress: { phase: settings.reader === 'gemini' ? 'gemini' : 'local', reader: settings.reader, completed: 0, total: items.length } });
   let dishes = items.map(item => analyzeDishLocally({ ...item, sourceUrl: source.sourceUrl }));
   if (settings.reader === 'gemini') {
     // Lazy load so local mode never loads the SDK or consumes API quota.
@@ -337,17 +325,23 @@ async function readMenuUrl(
     const extracted = [];
     for (let offset = 0; offset < items.length; offset += 8) {
       const batch = items.slice(offset, offset + 8);
-      const result = await readMenu({ ...source, items: batch, text: batch.map(item => item.evidence).join('\n\n') }, {
-        onRetry: ({ delay }) => onProgress({ progress: { phase: 'gemini', reader: 'gemini', completed: extracted.length, total: items.length, retrying: true, retrySeconds: Math.ceil(delay / 1000) } }),
-      });
+      const result = await readMenu({ ...source, items: batch, text: batch.map(item => item.evidence).join('\n\n') });
       const byId = new Map(result.dishes.filter(item => batch.some(expected => expected.id === item.id)).map(item => [item.id, item]));
       if (byId.size !== batch.length) throw new Error('Gemini did not return supported ingredients for every requested menu item. Retry or select MENU_READER=local.');
       for (const item of batch) extracted.push({ ...byId.get(item.id), sourceUrl: source.sourceUrl, analysisMethod: 'gemini' });
-      onProgress({ progress: { phase: 'gemini', reader: 'gemini', completed: extracted.length, total: items.length }, result: resultFor(extracted, false) });
     }
     dishes = extracted;
   }
-  return resultFor(dishes, true);
+  return {
+    venueId: venue.id, restaurant: venue.displayName.text, address: venue.formattedAddress,
+    mode: preview ? "preview" : "full", sourceUrl: source.sourceUrl,
+    sourceType: source.sourceType || "official_menu_text", sourceNotice: source.sourceNotice || '', analysisMethod: settings.reader, fetchedAt: source.fetchedAt,
+    dishes, status: "readable", intentionalPreview: preview,
+    coverageVerified: !preview && Boolean(source.inventoryComplete),
+    validationNeedsReview: Boolean(source.truncated), sourceTruncated: Boolean(source.truncated),
+    coverage: { listed: dishes.length, extracted: dishes.length, failed: 0, remaining: 0 },
+    failedParts: [],
+  };
 }
 
 module.exports = {
