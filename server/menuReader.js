@@ -15,11 +15,12 @@ function providerRetryDelay(error, attempt) {
   if (!details) { try { details = JSON.parse(error.message).error?.details; } catch { /* SDK may expose plain text errors. */ } }
   const retry = Array.isArray(details) ? details.find(item => String(item['@type']).includes('RetryInfo'))?.retryDelay : null;
   const seconds = typeof retry === 'string' ? Number.parseFloat(retry) : Number(retry?.seconds);
-  return Math.min(120000, Math.max(30000 * 2 ** attempt, Number.isFinite(seconds) ? seconds * 1000 + 500 : 0));
+  if (seconds > 60 || /per day|requestsperday|daily/i.test(error.message || '')) return Infinity;
+  return Math.min(30000, Math.max(5000 * 2 ** attempt, Number.isFinite(seconds) ? seconds * 1000 + 500 : 0));
 }
 let providerCooldownUntil = 0;
 
-async function generate(schema, contents, { sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+async function generate(schema, contents, { sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), onRetry = () => {} } = {}) {
   const model = process.env.GEMINI_MENU_MODEL || process.env.GEMINI_MODEL;
   if (!process.env.GEMINI_API_KEY || !model) throw new Error("Configure GEMINI_API_KEY and GEMINI_MENU_MODEL or GEMINI_MODEL on the backend.");
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -27,16 +28,19 @@ async function generate(schema, contents, { sleep = ms => new Promise(resolve =>
     try {
       if (Date.now() < providerCooldownUntil) await sleep(providerCooldownUntil - Date.now());
       const response = await ai.models.generateContent({ model, contents, config: {
-        httpOptions: { timeout: 60000 }, responseMimeType: "application/json", responseJsonSchema: schema,
+        httpOptions: { timeout: 60000, retryOptions: { attempts: 1 } }, responseMimeType: "application/json", responseJsonSchema: schema,
       } });
       if (response.candidates?.[0]?.finishReason === "MAX_TOKENS") throw new Error("Gemini returned a truncated response. Try the menu again.");
       if (!response.text) throw new Error("Gemini returned an empty response.");
       try { return JSON.parse(response.text); } catch { throw new Error("Gemini returned invalid menu JSON."); }
     } catch (error) {
+      error.menuProvider = 'gemini';
       const status = Number(error.status || error.code);
       const temporary = [20, 429, 500, 502, 503, 504].includes(status) || ["AbortError", "TimeoutError"].includes(error.name);
       if (!temporary || attempt === 2) throw error;
       const delay = providerRetryDelay(error, attempt);
+      if (!Number.isFinite(delay)) throw error;
+      onRetry({ attempt: attempt + 1, delay, status });
       if (status === 429) providerCooldownUntil = Date.now() + delay;
       await sleep(delay);
       if (status === 429 && Date.now() >= providerCooldownUntil) providerCooldownUntil = 0;
@@ -57,7 +61,7 @@ const extractionSchema = {
   }, required: ["status", "dishes"], additionalProperties: false,
 };
 
-async function readMenu(source, { preview = false } = {}) {
+async function readMenu(source, { preview = false, onRetry } = {}) {
   const expected = Array.isArray(source.items) ? source.items : [];
   const schema = structuredClone(extractionSchema);
   if (expected.length) {
@@ -73,7 +77,7 @@ fields stay empty. Each concern requires an exact supporting quote and reasoning
 Evidence is copied exactly from the source, not rewritten or assembled from unrelated items.
 Unknown ingredients, sourcing and cross-contact remain unknown; never claim safety or
 religious certification. Do not omit an item because ingredients are missing.
-INPUT: ${JSON.stringify({ restaurant: source.restaurant, text: source.text, items: expected })}`);
+INPUT: ${JSON.stringify({ restaurant: source.restaurant, text: source.text, items: expected })}`, { onRetry });
   if (!result || !["readable", "partial", "unreadable"].includes(result.status) || !Array.isArray(result.dishes)) throw new Error("Invalid menu extraction response.");
   const text = normalize(source.text);
   let rejected = 0;

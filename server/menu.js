@@ -42,6 +42,11 @@ function splitMenu(text, size = 5500) {
 
 function publicError(error) {
   const code = Number(error?.status || error?.code);
+  if (error?.menuProvider === 'gemini') {
+    if (code === 429) return 'Gemini request quota or rate limit reached. Check the backend Google AI quota/billing, then retry. Completed dishes remain visible.';
+    if ([401, 403].includes(code)) return 'Gemini rejected the backend API key or permissions. Check the Render Gemini settings.';
+    if ([500, 502, 503, 504].includes(code)) return 'Gemini is temporarily unavailable after limited retries. Please try again.';
+  }
 
   if (code === 429) {
     return "The official menu website is rate-limiting requests. Please retry later.";

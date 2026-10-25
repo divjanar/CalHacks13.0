@@ -220,6 +220,43 @@ test('reader configuration is explicit, rejects missing keys, and isolates API-k
   assert.throws(menuSettings, /local or gemini/)
 })
 
+test('Gemini retries have one owner and daily quota failures do not sleep', async t => {
+  const Module = require('node:module'), original = Module._load
+  const savedKey = process.env.GEMINI_API_KEY, savedModel = process.env.GEMINI_MODEL
+  t.after(() => {
+    Module._load = original
+    delete require.cache[require.resolve('../server/menuReader')]
+    savedKey === undefined ? delete process.env.GEMINI_API_KEY : process.env.GEMINI_API_KEY = savedKey
+    savedModel === undefined ? delete process.env.GEMINI_MODEL : process.env.GEMINI_MODEL = savedModel
+  })
+  process.env.GEMINI_API_KEY = 'mock-key'
+  process.env.GEMINI_MODEL = 'mock-model'
+  let calls = 0
+  let failure = Object.assign(new Error('temporarily unavailable'), { status: 503 })
+  Module._load = function (request, parent, ...args) {
+    if (request === '@google/genai' && parent?.filename.endsWith('menuReader.js')) return { GoogleGenAI: class {
+      models = { generateContent: async input => {
+        calls++
+        assert.equal(input.config.httpOptions.retryOptions.attempts, 1)
+        throw failure
+      } }
+    } }
+    return original.call(this, request, parent, ...args)
+  }
+  delete require.cache[require.resolve('../server/menuReader')]
+  const { generate } = require('../server/menuReader')
+  const sleeps = [], retries = []
+  await assert.rejects(generate({}, 'test', { sleep: async delay => sleeps.push(delay), onRetry: update => retries.push(update) }), /temporarily unavailable/)
+  assert.equal(calls, 3)
+  assert.equal(sleeps.length, 2)
+  assert.equal(retries.length, 2)
+  assert.equal(failure.menuProvider, 'gemini')
+  calls = 0
+  failure = Object.assign(new Error('Generate requests per day quota exceeded'), { status: 429 })
+  await assert.rejects(generate({}, 'test', { sleep: async () => assert.fail('daily quotas should not retry') }), /quota exceeded/)
+  assert.equal(calls, 1)
+})
+
 test('Gemini reader publishes completed batches before the full menu finishes', async t => {
   const names = ['MENU_READER', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_MENU_MODEL']
   const saved = Object.fromEntries(names.map(name => [name, process.env[name]]))

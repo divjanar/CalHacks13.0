@@ -172,16 +172,24 @@ async function fetchRenderedMenu(venue, sourceUrl) {
 
   const browser = await chromium.launch({
     headless: true,
+    timeout: 20000,
   });
 
   try {
     const page = await browser.newPage();
+    page.setDefaultTimeout(15000);
     const configuredUrl = new URL(sourceUrl);
 
     // Keep main-page navigation on the configured host.
     // Embedded resources can still load from other hosts.
     await page.route("**/*", async (route) => {
       const request = route.request();
+      // Menu text does not need product photos, videos or custom fonts.
+      // Avoid downloading/decoding these on the small hosted backend.
+      if (['image', 'media', 'font'].includes(request.resourceType())) {
+        await route.abort();
+        return;
+      }
 
       if (
         request.isNavigationRequest() &&

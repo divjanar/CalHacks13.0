@@ -139,6 +139,9 @@ export default function Food() {
       </div>
 
       {full.menu?.sourceNotice && <Notice>{full.menu.sourceNotice}</Notice>}
+      {full.loading && full.progress?.retrying && (
+        <p role="status">Gemini is temporarily busy. Retrying in {full.progress.retrySeconds} seconds.</p>
+      )}
 
       {!full.menu && full.loading && (
         <p role="status">

@@ -337,7 +337,9 @@ async function readMenuUrl(
     const extracted = [];
     for (let offset = 0; offset < items.length; offset += 8) {
       const batch = items.slice(offset, offset + 8);
-      const result = await readMenu({ ...source, items: batch, text: batch.map(item => item.evidence).join('\n\n') });
+      const result = await readMenu({ ...source, items: batch, text: batch.map(item => item.evidence).join('\n\n') }, {
+        onRetry: ({ delay }) => onProgress({ progress: { phase: 'gemini', reader: 'gemini', completed: extracted.length, total: items.length, retrying: true, retrySeconds: Math.ceil(delay / 1000) } }),
+      });
       const byId = new Map(result.dishes.filter(item => batch.some(expected => expected.id === item.id)).map(item => [item.id, item]));
       if (byId.size !== batch.length) throw new Error('Gemini did not return supported ingredients for every requested menu item. Retry or select MENU_READER=local.');
       for (const item of batch) extracted.push({ ...byId.get(item.id), sourceUrl: source.sourceUrl, analysisMethod: 'gemini' });
