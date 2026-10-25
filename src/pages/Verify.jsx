@@ -1,5 +1,7 @@
 ﻿import { useEffect, useRef, useState } from 'react'
 import { useAuth, useClerk, useUser } from '@clerk/react'
+import { useMutation, useQuery } from 'convex/react'
+import { api } from '../../convex/_generated/api'
 import Page from '../components/Page'
 import Field from '../components/Field'
 import Button from '../components/Button'
@@ -15,6 +17,11 @@ export default function Verify() {
   const { getToken } = useAuth()
   const { isLoaded, isSignedIn, user } = useUser()
   const clerk = useClerk()
+  const options = useQuery(api.verification.getOptions)
+  const recordDemo = useMutation(api.verification.recordDemo)
+  const [mode, setMode] = useState('demo')
+  const [dateOfBirth, setDateOfBirth] = useState('')
+  const demoMode = options?.demoEnabled && mode === 'demo'
 
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
@@ -39,7 +46,7 @@ export default function Verify() {
     emailAddress?.verification?.status === 'verified' &&
     isUniversityEmail(email)
 
-  // This backend value now requires both name and DOB checks.
+  // Backend eligibility distinguishes document checks from demo declarations.
   const passed = state.account?.ageCheckPassed === true
 
   const savedFirstName =
@@ -61,10 +68,13 @@ export default function Verify() {
     requestRef.current = null
     initializedFor.current = null
 
+    // Clear private drafts immediately when the authenticated account changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFirstName('')
     setLastName('')
     setFile(null)
     setConsent(false)
+    setDateOfBirth('')
     setChecking(false)
     setAwaitingSavedResult(false)
     setMessage('')
@@ -105,6 +115,8 @@ export default function Verify() {
 
   useEffect(() => {
     if (passed) {
+      // The persisted backend result completes either verification method.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAwaitingSavedResult(false)
     }
   }, [passed])
@@ -319,6 +331,27 @@ export default function Verify() {
     }
   }
 
+  async function checkDemo(event) {
+    event.preventDefault()
+    if (checking || passed || awaitingSavedResult || !emailVerified) return
+    clearMessage()
+    const currentRequest = ++requestNumber.current
+    setChecking(true)
+    try {
+      await recordDemo({ firstName: firstName.trim(), lastName: lastName.trim(), dateOfBirth, acknowledged: consent })
+      if (currentRequest !== requestNumber.current) return
+      setDateOfBirth('')
+      setAwaitingSavedResult(true)
+      setMessage('Demo declaration saved. Waiting for your account to update…')
+    } catch (error) {
+      if (currentRequest !== requestNumber.current) return
+      setFailed(true)
+      setMessage(typeof error.data === 'string' ? error.data : 'Unable to save demo setup. Please try again.')
+    } finally {
+      if (currentRequest === requestNumber.current) setChecking(false)
+    }
+  }
+
   function continueSetup() {
     if (!passed) return
 
@@ -333,7 +366,7 @@ export default function Verify() {
   if (
     !isLoaded ||
     state.authLoading ||
-    state.accountLoading
+    state.accountLoading || (isSignedIn && options === undefined)
   ) {
     return (
       <div
@@ -365,7 +398,7 @@ export default function Verify() {
     <Page
       eyebrow="ACCOUNT SETUP · VERIFICATION FIRST"
       title="A thoughtful first hello."
-      intro="Check your university email, then complete the prototype name and DOB checks."
+      intro="Check your university email, then complete account setup."
     >
       <section className="card narrow-card">
         <h2>1 · University email</h2>
@@ -407,24 +440,30 @@ export default function Verify() {
           </>
         )}
 
-        <h2>2 · Legal name and document DOB</h2>
+        <h2>2 · Name and age setup</h2>
+
+        {!passed && options?.demoEnabled && (
+          <div className="menu-view-actions" role="group" aria-label="Account setup method">
+            <button type="button" className={`button${demoMode ? '' : ' secondary'}`} disabled={busy} aria-pressed={Boolean(demoMode)} onClick={() => { setMode('demo'); setConsent(false); clearMessage() }}>Temporary demo · no API</button>
+            <button type="button" className={`button${demoMode ? ' secondary' : ''}`} disabled={busy} aria-pressed={!demoMode} onClick={() => { setMode('gemini'); setConsent(false); clearMessage() }}>Gemini document check</button>
+          </div>
+        )}
 
         {passed ? (
           <Notice>
-            Your prototype name match and DOB result are saved.
-            Document authenticity, ownership, and expiry have
-            not been verified.
+            {state.account?.verificationMethod === 'demo_self_attested'
+              ? 'Temporary demo declaration saved. Your name and age were self-entered; no document or identity verification was performed.'
+              : 'Your prototype name match and DOB result are saved. Document authenticity, ownership, and expiry have not been verified.'}
           </Notice>
         ) : (
           <form
-            onSubmit={checkDocument}
+            onSubmit={demoMode ? checkDemo : checkDocument}
             aria-busy={busy}
           >
             <Notice>
-              Development test: use fictional names and documents.
-              The entered name and image are sent to Google Gemini.
-              This compares printed text; it does not authenticate
-              the document or establish who uploaded it.
+              {demoMode
+                ? 'Temporary demo: enter a name and fictional date of birth indicating age 18 or older. No image or Gemini API is needed. This is a self-declaration, not identity or document verification. Only the name and demo status are saved; the date of birth is not stored.'
+                : 'Development test: use fictional names and documents. The entered name and image are sent to Google Gemini. This compares printed text; it does not authenticate the document or establish who uploaded it.'}
             </Notice>
 
             <fieldset
@@ -438,7 +477,7 @@ export default function Verify() {
             >
               <Field
                 label="Legal first name"
-                hint="Enter the first name exactly as printed. Do not include a separately listed middle name."
+                hint={demoMode ? 'Enter the name to use for this prototype account.' : 'Enter the first name exactly as printed. Do not include a separately listed middle name.'}
               >
                 <input
                   name="firstName"
@@ -470,7 +509,11 @@ export default function Verify() {
                 />
               </Field>
 
-              <Field label="Fictional document · JPEG or PNG · Maximum 5 MB">
+              {demoMode ? (
+                <Field label="Fictional date of birth" hint="Demo data only. This date is checked but not saved.">
+                  <input type="date" name="demoDateOfBirth" required value={dateOfBirth} onChange={event => { setDateOfBirth(event.target.value); clearMessage() }} />
+                </Field>
+              ) : <Field label="Fictional document · JPEG or PNG · Maximum 5 MB">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -478,9 +521,9 @@ export default function Verify() {
                   required
                   onChange={selectFile}
                 />
-              </Field>
+              </Field>}
 
-              {file && (
+              {!demoMode && file && (
                 <p className="field-value">
                   Selected: {file.name}
                 </p>
@@ -497,22 +540,22 @@ export default function Verify() {
                   }}
                 />
                 <span>
-                  I agree to Gemini processing the entered name
-                  and image, and confirm they contain fictional
-                  test data.
+                  {demoMode
+                    ? 'I understand this is a temporary demo declaration, not an identity check, and confirm I entered fictional date-of-birth data indicating age 18 or older.'
+                    : 'I agree to Gemini processing the entered name and image, and confirm they contain fictional test data.'}
                 </span>
               </label>
 
               <button
                 className="button secondary verification-action"
                 type="submit"
-                disabled={!file || !consent}
+                disabled={!consent || (demoMode ? !dateOfBirth : !file)}
               >
                 {checking
-                  ? 'Checking name and DOB…'
+                  ? demoMode ? 'Saving demo setup…' : 'Checking name and DOB…'
                   : awaitingSavedResult
                     ? 'Updating account…'
-                    : 'Check name and age'}
+                    : demoMode ? 'Continue with demo declaration' : 'Check name and age'}
               </button>
             </fieldset>
           </form>

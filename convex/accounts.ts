@@ -85,7 +85,7 @@ export const getMine = query({
       /^[^\s@]+@[^\s@]+\.edu$/.test(email) &&
       identity.emailVerified === true;
 
-    // This helper now requires a saved name match and DOB check.
+    // A named prototype check or explicitly enabled demo declaration is required.
     const ageCheckPassed = universityEmailVerified
       ? await hasPassedAgeCheck(
           ctx,
@@ -171,6 +171,7 @@ export const getMine = query({
       preferences,
       universityEmailVerified,
       ageCheckPassed,
+      verificationMethod: checkedIdentity?.verificationMethod ?? null,
       legalName,
       nextStep,
       questionnaireComplete: nextStep === "done",

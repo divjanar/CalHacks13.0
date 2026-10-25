@@ -2,23 +2,23 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
-  // Saved prototype document checks.
+  // Saved prototype document checks or explicitly labeled demo declarations.
   // No image, date of birth, or document number is stored.
   // This does not establish verified identity.
   ageChecks: defineTable({
     tokenIdentifier: v.string(),
     universityEmail: v.string(),
-    method: v.literal("prototype_dob"),
+    method: v.union(v.literal("prototype_dob"), v.literal("demo_self_attested")),
     checkedAt: v.number(),
 
-    // Entered legal name accepted by the backend comparison.
+    // Entered name accepted by the prototype check or demo declaration.
     // Optional to preserve existing DOB-only records.
     legalFirstName: v.optional(v.string()),
     legalLastName: v.optional(v.string()),
 
-    // Written after both name and DOB checks pass.
+    // Distinguishes document text comparison from self-entered demo data.
     nameCheckVersion: v.optional(
-      v.literal("name-match-v1")
+      v.union(v.literal("name-match-v1"), v.literal("demo-self-attested-v1"))
     ),
   }).index("by_tokenIdentifier", ["tokenIdentifier"]),
 

@@ -64,3 +64,21 @@ Build and unauthenticated health/CORS checks do not prove a successful sign-in,
 document check, reservation, or live Gemini assessment. Check those signed-in
 flows with an account after deployment. Do not reuse or upload identity documents
 automatically as a deployment test.
+
+## Temporary account setup without Gemini
+
+On the existing Convex development deployment, ENABLE_DEMO_VERIFICATION=true
+enables a clearly labeled demo declaration on the verification page. It requires
+Clerk authentication and a verified primary .edu email. The server checks the
+self-entered date for an age of at least 18; it does not verify a document or
+identity. No image is uploaded and the DOB is not stored. The saved record uses
+demo_self_attested / demo-self-attested-v1, distinct from Gemini checks.
+
+Set ENABLE_DEMO_VERIFICATION=false in Convex to disable both new declarations
+and acceptance of previously saved demo declarations. Genuine prototype document
+checks remain valid. The Gemini document-check tab keeps the existing Express
+route and requires its existing backend key, model, Convex URL/site URL, and
+matching age-check callback secret. Demo setup does not use those Render secrets.
+
+Run npm run test:verification for authentication, ownership, date validation,
+account completion, disabled-mode, and existing Gemini-flow regression tests.

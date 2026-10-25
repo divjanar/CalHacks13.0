@@ -217,7 +217,7 @@ export const join = mutation({
     slug: v.string(),
   },
 
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<Id<"reservations">> => {
     await requireVerifiedSetup(ctx);
 
     const account = await ctx.runQuery(

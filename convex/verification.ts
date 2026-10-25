@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import { query, internalMutation } from "./_generated/server";
+import { query, mutation, internalMutation } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 
 type DatabaseContext = QueryCtx | MutationCtx;
@@ -69,8 +69,8 @@ async function getPassedCheck(
   if (
     !check ||
     check.universityEmail !== email ||
-    check.method !== "prototype_dob" ||
-    check.nameCheckVersion !== "name-match-v1" ||
+    !((check.method === "prototype_dob" && check.nameCheckVersion === "name-match-v1") ||
+      (process.env.ENABLE_DEMO_VERIFICATION === "true" && check.method === "demo_self_attested" && check.nameCheckVersion === "demo-self-attested-v1")) ||
     !check.legalFirstName?.trim() ||
     !check.legalLastName?.trim()
   ) {
@@ -113,6 +113,7 @@ export async function requireVerifiedSetup(
     ...identity,
     legalFirstName: check.legalFirstName!,
     legalLastName: check.legalLastName!,
+    verificationMethod: check.method,
   };
 }
 
@@ -125,16 +126,11 @@ export const getContext = query({
   },
 });
 
-// Only callable by trusted Convex backend functions.
-// Express must call the protected HTTP callback.
-export const recordPassed = internalMutation({
-  args: {
-    tokenIdentifier: v.string(),
-    email: v.string(),
-    legalFirstName: v.string(),
-    legalLastName: v.string(),
-  },
-  handler: async (ctx, args) => {
+async function savePassedCheck(
+  ctx: MutationCtx,
+  args: { tokenIdentifier: string; email: string; legalFirstName: string; legalLastName: string },
+  method: "prototype_dob" | "demo_self_attested"
+) {
     const legalFirstName = cleanName(args.legalFirstName);
     const legalLastName = cleanName(args.legalLastName);
     const email = args.email.trim().toLowerCase();
@@ -180,11 +176,11 @@ export const recordPassed = internalMutation({
 
     const fields = {
       universityEmail: email,
-      method: "prototype_dob" as const,
+      method,
       checkedAt: Date.now(),
       legalFirstName,
       legalLastName,
-      nameCheckVersion: "name-match-v1" as const,
+      nameCheckVersion: method === "prototype_dob" ? "name-match-v1" as const : "demo-self-attested-v1" as const,
     };
 
     if (existing) {
@@ -201,5 +197,43 @@ export const recordPassed = internalMutation({
     }
 
     return null;
+}
+
+// Existing Gemini callback remains internal and keeps its original semantics.
+export const recordPassed = internalMutation({
+  args: { tokenIdentifier: v.string(), email: v.string(), legalFirstName: v.string(), legalLastName: v.string() },
+  returns: v.null(),
+  handler: (ctx, args) => savePassedCheck(ctx, args, "prototype_dob"),
+});
+
+export const getOptions = query({
+  args: {},
+  returns: v.object({ demoEnabled: v.boolean() }),
+  handler: async ctx => {
+    const identity = await ctx.auth.getUserIdentity();
+    return { demoEnabled: Boolean(identity && process.env.ENABLE_DEMO_VERIFICATION === "true") };
+  },
+});
+
+// Temporary prototype path: self-entered data, not OCR or document verification.
+// Identity always comes from Clerk; no user/account ID can be supplied.
+export const recordDemo = mutation({
+  args: { firstName: v.string(), lastName: v.string(), dateOfBirth: v.string(), acknowledged: v.boolean() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    if (process.env.ENABLE_DEMO_VERIFICATION !== "true") throw new ConvexError("Temporary demo setup is disabled.");
+    const identity = await requireUniversityIdentity(ctx);
+    if (!args.acknowledged) throw new ConvexError("Acknowledge that this is demo data, not a document check.");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(args.dateOfBirth)) throw new ConvexError("Enter a valid date of birth.");
+    const date = new Date(args.dateOfBirth + "T00:00:00Z");
+    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== args.dateOfBirth || date.getUTCFullYear() < 1900) throw new ConvexError("Enter a valid date of birth.");
+    const today = new Date(Date.now());
+    let age = today.getUTCFullYear() - date.getUTCFullYear();
+    if (today.getUTCMonth() < date.getUTCMonth() || (today.getUTCMonth() === date.getUTCMonth() && today.getUTCDate() < date.getUTCDate())) age--;
+    if (age < 18) throw new ConvexError("The entered date of birth must indicate an age of at least 18.");
+    // DOB and images are never stored. A passing Gemini result is never downgraded.
+    const existing = await getPassedCheck(ctx, identity.tokenIdentifier, identity.email);
+    if (existing?.method === "prototype_dob") return null;
+    return await savePassedCheck(ctx, { ...identity, legalFirstName: args.firstName, legalLastName: args.lastName }, "demo_self_attested");
   },
 });
