@@ -13,7 +13,7 @@ export async function suggestAreas(input, signal) {
     return (data.suggestions || []).map(item => item.placePrediction).filter(item => item?.placeId && item.text?.text).map(item => ({ id: item.placeId, label: item.text.text }))
   }
   const results = await Promise.allSettled([request(california), request()])
-  if (signal.aborted) return []
+  if (signal?.aborted) return []
   if (results.every(result => result.status === 'rejected')) throw results[0].reason
   const local = results[0].status === 'fulfilled' ? results[0].value.filter(item => /, (?:CA|California)(?:,|$)/i.test(item.label)) : []
   const national = results[1].status === 'fulfilled' ? results[1].value : []

@@ -64,6 +64,7 @@ export default function UserSettings() {
       legalName={legalName}
       email={pendingEmail}
       onboarding={!state.onboardingComplete}
+      demoDeclaration={state.account?.verificationMethod === 'demo_self_attested'}
     />
   )
 }
@@ -73,6 +74,7 @@ function ProfileForm({
   legalName,
   email,
   onboarding,
+  demoDeclaration,
 }) {
   const saveProfile = useMutation(api.accounts.saveProfile)
 
@@ -154,7 +156,9 @@ function ProfileForm({
       }
       intro={
         onboarding
-          ? 'Your legal name comes from your completed document check. Add your preferred name and local area.'
+          ? demoDeclaration
+            ? 'Your name comes from your temporary demo declaration. Add your preferred name and local area.'
+            : 'Your legal name comes from your completed document check. Add your preferred name and local area.'
           : 'Manage your preferred name and local area.'
       }
     >
@@ -175,8 +179,8 @@ function ProfileForm({
           }}
         >
           <Field
-            label="Legal first name"
-            hint="Saved from your completed prototype name check."
+            label={demoDeclaration ? 'First name' : 'Legal first name'}
+            hint={demoDeclaration ? 'Saved from your temporary demo declaration.' : 'Saved from your completed prototype name check.'}
           >
             <input
               name="firstName"
@@ -187,8 +191,8 @@ function ProfileForm({
           </Field>
 
           <Field
-            label="Legal last name"
-            hint="Legal-name changes require another review."
+            label={demoDeclaration ? 'Last name' : 'Legal last name'}
+            hint={demoDeclaration ? 'Saved from your temporary demo declaration.' : 'Legal-name changes require another review.'}
           >
             <input
               name="lastName"
@@ -200,7 +204,7 @@ function ProfileForm({
 
           <Field
             label="Preferred first name (optional)"
-            hint="Shown beside your account icon. Leave blank to use your legal first name."
+            hint="Shown beside your account icon. Leave blank to use your first name."
           >
             <input
               name="preferredFirstName"
@@ -237,10 +241,9 @@ function ProfileForm({
         </fieldset>
 
         <Notice>
-          Your legal name is tied to the saved prototype document
-          check. Your preferred name can be different.
-          The check compares printed text; it does not establish
-          document authenticity or ownership.
+          {demoDeclaration
+            ? 'Your name was saved through temporary demo setup. No document or identity verification was performed. Your preferred name can be different.'
+            : 'Your legal name is tied to the saved prototype document check. Your preferred name can be different. The check compares printed text; it does not establish document authenticity or ownership.'}
         </Notice>
 
         {message && (
