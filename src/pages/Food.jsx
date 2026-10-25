@@ -75,7 +75,7 @@ export default function Food() {
     <Page
       className="food-page"
       title="A menu that works for you."
-      intro={`${dinner.restaurant} · Checked locally against your saved dining needs.`}
+      intro={`${dinner.restaurant} · ${full.menu?.analysisMethod === 'gemini' ? 'Menu read by Gemini. Checked locally against your saved dining needs.' : 'Checked locally against your saved dining needs.'}`}
     >
       <Notice>
         Your saved needs:{' '}
