@@ -75,7 +75,7 @@ export default function Food() {
     <Page
       className="food-page"
       title="A menu that works for you."
-      intro={`${dinner.restaurant} · ${full.menu?.analysisMethod === 'gemini' ? 'Menu read by Gemini. Checked locally against your saved dining needs.' : 'Checked locally against your saved dining needs.'}`}
+      intro={`${dinner.restaurant} · ${full.menu?.analysisMethod === 'gemini' ? 'Menu read by Gemini. Checked locally against your saved dining needs.' : !full.menu && full.loading ? 'Preparing your menu.' : 'Checked locally against your saved dining needs.'}`}
     >
       <Notice>
         Your saved needs:{' '}
@@ -142,7 +142,9 @@ export default function Food() {
 
       {!full.menu && full.loading && (
         <p role="status">
-          Loading the official restaurant menu…
+          {full.progress?.phase === 'gemini'
+            ? `Gemini is reading the menu: ${full.progress.completed} of ${full.progress.total} items completed. Dishes appear as each batch finishes.`
+            : 'Loading the official restaurant menu…'}
         </p>
       )}
 
@@ -192,7 +194,9 @@ export default function Food() {
 
           {full.loading && (
             <p role="status">
-              Reading the menu. Available dishes remain visible.
+              {full.progress?.phase === 'gemini'
+                ? `Gemini has read ${full.progress.completed} of ${full.progress.total} items. Completed dishes are shown below.`
+                : 'Reading the menu. Available dishes remain visible.'}
             </p>
           )}
 

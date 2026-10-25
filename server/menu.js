@@ -348,6 +348,10 @@ function registerMenu(app, dependencies = {}) {
 
         const result = await readUrl(venue, {
           preview: mode === "preview",
+          onProgress(update) {
+            if (update.progress) job.progress = update.progress;
+            if (update.result && validResult(update.result)) job.result = update.result;
+          },
         });
 
         if (!validResult(result)) {

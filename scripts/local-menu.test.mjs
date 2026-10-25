@@ -220,6 +220,40 @@ test('reader configuration is explicit, rejects missing keys, and isolates API-k
   assert.throws(menuSettings, /local or gemini/)
 })
 
+test('Gemini reader publishes completed batches before the full menu finishes', async t => {
+  const names = ['MENU_READER', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_MENU_MODEL']
+  const saved = Object.fromEntries(names.map(name => [name, process.env[name]]))
+  const Module = require('node:module'), original = Module._load
+  t.after(() => { Module._load = original; for (const name of names) saved[name] === undefined ? delete process.env[name] : process.env[name] = saved[name] })
+  process.env.MENU_READER = 'gemini'
+  process.env.GEMINI_API_KEY = 'mock-key'
+  process.env.GEMINI_MODEL = 'mock-model'
+  const venue = require('../src/data/sampleVenues.json')[0]
+  const items = Array.from({ length: 9 }, (_, i) => ({ ...captain, id: `dish-${i}`, sourceItemId: `dish-${i}` }))
+  const updates = []
+  let batches = 0
+  Module._load = function (request, parent, ...args) {
+    if (request === './menuFetcher' && parent?.filename.endsWith('urlMenuReader.js')) return { fetchMenuText: async () => ({ sourceUrl: venue.menuUrl, items }) }
+    if (request === './menuReader' && parent?.filename.endsWith('urlMenuReader.js')) return { readMenu: async source => {
+      if (++batches === 2) {
+        const partial = updates.find(update => update.result)
+        assert.equal(partial.result.dishes.length, 8)
+        assert.equal(partial.result.coverage.remaining, 1)
+        assert.equal(partial.result.status, 'partial')
+        assert.ok(partial.result.dishes.every(dish => dish.analysisMethod === 'gemini'))
+      }
+      return { dishes: source.items }
+    } }
+    return original.call(this, request, parent, ...args)
+  }
+  delete require.cache[require.resolve('../server/urlMenuReader')]
+  const menu = await require('../server/urlMenuReader').readMenuUrl(venue, { preview: false, onProgress: update => updates.push(update) })
+  assert.equal(batches, 2)
+  assert.equal(menu.dishes.length, 9)
+  assert.equal(menu.coverage.remaining, 0)
+  assert.deepEqual(updates.at(-1).progress, { phase: 'gemini', reader: 'gemini', completed: 9, total: 9 })
+})
+
 test('Gemini reader uses the same inventory and local warnings, and can switch back without a key', async t => {
   const names = ['MENU_READER', 'GEMINI_API_KEY', 'GEMINI_MODEL', 'GEMINI_MENU_MODEL']
   const saved = Object.fromEntries(names.map(name => [name, process.env[name]]))
